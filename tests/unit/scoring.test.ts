@@ -64,4 +64,18 @@ describe("scoreRound", () => {
   it("gives the chooser nothing when nobody guessed", () => {
     expect(scoreRound({}, 50, "p1", false)).toEqual({ p1: 0 });
   });
+
+  it("ignores the chooser's own guess when averaging", () => {
+    // p2=50 → 4 points, p3=51 → 4 points, p1(chooser)=62.5 → 2 points
+    // With filter (current): (4 + 4) / 2 = 4
+    // Without filter (pre-fix): (4 + 4 + 2) / 3 = 3.33... → 3
+    // The chooser should get 4, not 3
+    const scores = scoreRound(
+      { p2: 50, p3: 51, p1: 62.5 },
+      50,
+      "p1",
+      false,
+    );
+    expect(scores).toEqual({ p2: 4, p3: 4, p1: 4 });
+  });
 });

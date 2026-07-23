@@ -19,4 +19,10 @@ describe("chooserForRound", () => {
     expect(chooserForRound(players, 4)).toBe("p1");
     expect(chooserForRound(players, 7)).toBe("p1");
   });
+
+  it("throws when given an empty player list", () => {
+    expect(() => chooserForRound([], 1)).toThrow(
+      "chooserForRound: cannot choose from an empty player list",
+    );
+  });
 });
