@@ -24,11 +24,14 @@ describe("DECK", () => {
 describe("drawCard", () => {
   it("skips cards already used this game", () => {
     const used = DECK.slice(0, DECK.length - 1).map((c) => c.id as string);
-    expect(drawCard(used).id).toBe(DECK[DECK.length - 1].id);
+    const drawn = drawCard(used);
+    expect(drawn.id).toBe(DECK[DECK.length - 1].id);
   });
 
   it("starts repeating once the deck is exhausted", () => {
     const used = DECK.map((c) => c.id as string);
-    expect(DECK.some((c) => c.id === drawCard(used).id)).toBe(true);
+    const drawn = drawCard(used);
+    expect(drawn).toBeDefined();
+    expect(DECK.some((c) => c.id === drawn.id)).toBe(true);
   });
 });
