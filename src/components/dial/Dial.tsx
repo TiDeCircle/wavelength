@@ -13,6 +13,14 @@ import {
   valueFromPointer,
 } from "./geometry";
 
+export interface DialNeedle {
+  value: number;
+  /** Short caption drawn at the needle tip. Omit for an unlabelled needle. */
+  label?: string;
+  /** CSS colour. Defaults to the standard needle colour. */
+  color?: string;
+}
+
 export interface DialProps {
   /** Needle position, 0-100. */
   value: number;
@@ -30,6 +38,11 @@ export interface DialProps {
   animateNeedle?: boolean;
   /** Hide the needle entirely — the psychic has no guess to show yet. */
   showNeedle?: boolean;
+  /**
+   * Draw several needles at once instead of the single `value` one. Used on
+   * reveal, where every player's dial appears together.
+   */
+  needles?: DialNeedle[];
   /** Extra class for the scoring band, used for the reveal animation. */
   bandClassName?: string;
 }
@@ -43,6 +56,7 @@ export function Dial({
   disabled = false,
   animateNeedle = false,
   showNeedle = true,
+  needles,
   bandClassName,
 }: DialProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -109,7 +123,7 @@ export function Dial({
     >
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+        viewBox={`-12 -14 ${VIEW_W + 24} ${VIEW_H + 14}`}
         className={`w-full touch-none ${interactive ? "cursor-grab active:cursor-grabbing" : ""}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -142,22 +156,45 @@ export function Dial({
         })}
 
         {/* Needle */}
+        {showNeedle &&
+          (needles ?? [{ value }]).map((needle, i) => (
+            <g key={i}>
+              <g
+                transform={`rotate(${(needle.value - 50) * 1.8} ${CX} ${CY})`}
+                style={{
+                  transition: animateNeedle
+                    ? "transform 700ms cubic-bezier(0.22, 1, 0.36, 1)"
+                    : undefined,
+                }}
+              >
+                <polygon
+                  points={`${CX - 7},${CY} ${CX + 7},${CY} ${CX + 2},${CY - R_OUTER - 4} ${CX - 2},${CY - R_OUTER - 4}`}
+                  fill={needle.color ?? "var(--needle)"}
+                  opacity={needles ? 0.85 : 1}
+                />
+                <circle
+                  cx={CX}
+                  cy={CY - R_OUTER - 4}
+                  r={7}
+                  fill={needle.color ?? "var(--needle)"}
+                />
+              </g>
+              {needle.label && (
+                <text
+                  x={CX + (R_OUTER + 16) * Math.cos(((180 - needle.value * 1.8) * Math.PI) / 180)}
+                  y={CY - (R_OUTER + 16) * Math.sin(((180 - needle.value * 1.8) * Math.PI) / 180)}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  className="text-[15px] font-bold"
+                  fill={needle.color ?? "var(--needle)"}
+                >
+                  {needle.label}
+                </text>
+              )}
+            </g>
+          ))}
         {showNeedle && (
           <>
-            <g
-              transform={`rotate(${(value - 50) * 1.8} ${CX} ${CY})`}
-              style={{
-                transition: animateNeedle
-                  ? "transform 700ms cubic-bezier(0.22, 1, 0.36, 1)"
-                  : undefined,
-              }}
-            >
-              <polygon
-                points={`${CX - 7},${CY} ${CX + 7},${CY} ${CX + 2},${CY - R_OUTER - 4} ${CX - 2},${CY - R_OUTER - 4}`}
-                fill="var(--needle)"
-              />
-              <circle cx={CX} cy={CY - R_OUTER - 4} r={7} fill="var(--needle)" />
-            </g>
             <circle cx={CX} cy={CY} r={16} fill="var(--needle)" />
             <circle cx={CX} cy={CY} r={7} fill="var(--surface)" />
           </>
