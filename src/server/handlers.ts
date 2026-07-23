@@ -132,7 +132,7 @@ export function createHandlers(io: IO) {
     if (game.phase !== "guess") disarmGuessDeadline(room);
 
     broadcast(room);
-    if (game.phase === "guess") maybeReveal(room);
+    if (game.phase === "guess") maybeReveal(room); // already broadcasts if it fires
   }
 
   /** Everyone with a dial who is still connected. */
@@ -144,12 +144,16 @@ export function createHandlers(io: IO) {
     );
   }
 
-  /** Move on as soon as every connected guesser has locked. */
-  function maybeReveal(room: Room): void {
+  /** Move on as soon as every connected guesser has locked. Returns true if reveal was triggered. */
+  function maybeReveal(room: Room): boolean {
     const round = room.game?.round;
-    if (!round || room.game?.phase !== "guess") return;
+    if (!round || room.game?.phase !== "guess") return false;
     const waiting = activeGuessers(room).filter((p) => !round.locked[p.id]);
-    if (waiting.length === 0) apply(room, { type: "REVEAL" });
+    if (waiting.length === 0) {
+      apply(room, { type: "REVEAL" });
+      return true;
+    }
+    return false;
   }
 
   function armGuessDeadline(room: Room): void {
@@ -248,6 +252,8 @@ export function createHandlers(io: IO) {
         ? configSchema.partial().parse(data.config)
         : undefined;
       const room = createRoom(config);
+      // Online rooms always use per-player dials, never shared-dial mode (pass-the-device).
+      room.config.sharedDial = false;
       const player = addPlayer(room, data.name);
       bind(socket, room, player);
 
@@ -296,6 +302,8 @@ export function createHandlers(io: IO) {
       const data = parse(socket, configSchema.partial(), payload ?? {});
       if (!data) return;
       me.room.config = { ...me.room.config, ...data };
+      // Online rooms always use per-player dials, never shared-dial mode (pass-the-device).
+      me.room.config.sharedDial = false;
       touch(me.room);
       broadcast(me.room);
     });
@@ -400,7 +408,10 @@ export function createHandlers(io: IO) {
         deleteRoom(me.room.code);
         return;
       }
-      broadcast(me.room);
+      // A player leaving can be the last one we were waiting on; re-check for reveal.
+      if (!maybeReveal(me.room)) {
+        broadcast(me.room);
+      }
     });
 
     socket.on("disconnect", () => {
@@ -416,8 +427,9 @@ export function createHandlers(io: IO) {
 
       watchChooser(room);
       // A player dropping can be the last one we were waiting on.
-      maybeReveal(room);
-      broadcast(room);
+      if (!maybeReveal(room)) {
+        broadcast(room);
+      }
     });
   };
 }
