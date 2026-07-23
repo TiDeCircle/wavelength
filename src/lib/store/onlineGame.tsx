@@ -170,10 +170,24 @@ export function OnlineGameProvider({
   const round = room?.game?.round ?? null;
   const phase = room?.game?.phase;
 
+  /**
+   * Team to judge this player by.
+   *
+   * Once a game starts the roster is frozen, and that roster is the authority
+   * — not the lobby assignment. They differ in co-op, where the server folds
+   * everyone onto one team while their lobby chips keep the side they were
+   * auto-balanced onto. Reading the lobby value here left every co-op player
+   * but the first unable to touch the dial.
+   */
+  const myTeamId =
+    (me && room?.game?.players.find((p) => p.id === me.id)?.teamId) ??
+    me?.teamId ??
+    null;
+
   const isHost = Boolean(me && room && room.hostId === me.id);
   const isPsychic = Boolean(me && round && round.psychicId === me.id);
-  const isGuessTeam = Boolean(me && round && me.teamId === round.guessTeamId);
-  const isBetTeam = Boolean(me && round && me.teamId === round.betTeamId);
+  const isGuessTeam = Boolean(round && myTeamId === round.guessTeamId);
+  const isBetTeam = Boolean(round && myTeamId === round.betTeamId);
   // The psychic already knows the answer, so they never steer the needle.
   const canGuess = isGuessTeam && !isPsychic && phase === "guess";
   const canBet = isBetTeam && phase === "bet";
