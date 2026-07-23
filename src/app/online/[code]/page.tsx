@@ -127,10 +127,10 @@ function RoomGame() {
           onChange={game.setGuess}
           onLock={game.lockGuess}
           canGuess={game.canGuess}
-          canLock={game.isGuessTeam}
+          canLock={game.canLock}
           watchingLabel={
             game.isPsychic
-              ? "คุณเป็น psychic — ดูอย่างเดียว"
+              ? "คุณเป็น psychic — ดูอย่างเดียว รอทีมล็อกคำตอบ"
               : `รอ${guessTeam?.name ?? "อีกทีม"}ล็อกคำตอบ`
           }
         />

@@ -49,6 +49,7 @@ interface OnlineGameContextValue {
   isBetTeam: boolean;
   canGuess: boolean;
   canBet: boolean;
+  canLock: boolean;
 
   createRoom: (name: string) => Promise<JoinResult>;
   joinRoom: (code: string, name: string) => Promise<JoinResult>;
@@ -193,6 +194,22 @@ export function OnlineGameProvider({
   const canBet = isBetTeam && phase === "bet";
 
   /**
+   * Locking the answer is the guessing team's call, not the psychic's — they
+   * know where the target is, so letting them end the round decides it for
+   * everyone. The exception keeps the game from deadlocking: if the psychic is
+   * the only one left on their side, nobody else can lock, so they must.
+   */
+  const teammatesLeft = Boolean(
+    room?.game?.players.some(
+      (p) =>
+        p.teamId === myTeamId &&
+        p.id !== me?.id &&
+        room.players.find((rp) => rp.id === p.id)?.connected,
+    ),
+  );
+  const canLock = isGuessTeam && (!isPsychic || !teammatesLeft);
+
+  /**
    * Two ways a target legitimately reaches this client: the public reveal that
    * everyone gets, or the private emit only the psychic receives. A stale
    * private target from an earlier round is ignored.
@@ -291,6 +308,7 @@ export function OnlineGameProvider({
       isBetTeam,
       canGuess,
       canBet,
+      canLock,
       createRoom,
       joinRoom,
       rejoin,
@@ -321,6 +339,7 @@ export function OnlineGameProvider({
       isBetTeam,
       canGuess,
       canBet,
+      canLock,
       createRoom,
       joinRoom,
       rejoin,
