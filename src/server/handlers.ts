@@ -1,27 +1,25 @@
 import type { Server, Socket } from "socket.io";
 import { z } from "zod";
-import type { GameState, RoundSeed } from "@/types/game";
 import type {
   ClientToServerEvents,
   JoinResult,
   ServerToClientEvents,
 } from "@/lib/socket/events";
 import {
-  betSchema,
-  clueSchema,
+  cardSchema,
   configSchema,
   createRoomSchema,
   guessSchema,
   joinRoomSchema,
-  setTeamSchema,
+  subjectSchema,
 } from "@/lib/socket/events";
-import { drawCardId } from "@/lib/cards";
+import { drawCard } from "@/lib/cards";
 import { createGame, gameReducer, type GameAction } from "@/lib/game/reducer";
 import { randomTarget } from "@/lib/game/target";
 import { publicRoom } from "./redact";
 import {
   addPlayer,
-  buildRoster,
+  buildPlayers,
   createRoom,
   deleteRoom,
   getRoom,
@@ -32,7 +30,6 @@ import {
   removePlayer,
   rosterIsPlayable,
   sweep,
-  TEAM_IDS,
   touch,
   type Room,
   type ServerPlayer,
@@ -43,7 +40,7 @@ import {
  * send intents, and each one is checked three ways before it lands:
  *
  *   1. Zod-validated payload shape
- *   2. role guard here (is this player the psychic / on the guessing team / host)
+ *   2. role guard here (is this player the chooser / a guesser / host)
  *   3. phase guard inside the pure reducer
  *
  * Nothing is trusted from the client beyond "this socket belongs to player X".
@@ -56,12 +53,8 @@ type ClientSocket = Socket<ClientToServerEvents, ServerToClientEvents>;
 interface RoomTimers {
   guessDeadline?: NodeJS.Timeout;
   psychicGrace?: NodeJS.Timeout;
-  guessBroadcast?: NodeJS.Timeout;
-  pendingGuess?: number;
 }
 const timers = new Map<string, RoomTimers>();
-
-const GUESS_BROADCAST_MS = 50;
 
 function timersFor(code: string): RoomTimers {
   let t = timers.get(code);
@@ -77,37 +70,38 @@ function clearTimers(code: string): void {
   if (!t) return;
   if (t.guessDeadline) clearTimeout(t.guessDeadline);
   if (t.psychicGrace) clearTimeout(t.psychicGrace);
-  if (t.guessBroadcast) clearTimeout(t.guessBroadcast);
   timers.delete(code);
-}
-
-function nextSeed(game: GameState | null): RoundSeed {
-  return {
-    cardId: drawCardId(game?.usedCardIds ?? []),
-    target: randomTarget(),
-  };
 }
 
 export function createHandlers(io: IO) {
   /** Push the full (target-free) room to everyone, plus a private target emit. */
   function broadcast(room: Room): void {
-    io.to(room.code).emit("room:state", publicRoom(room));
-    sendTargetToPsychic(room);
+    for (const player of room.players) {
+      if (player.socketId) {
+        io.to(player.socketId).emit("room:state", publicRoom(room, player.id));
+      }
+    }
+    sendPrivateToChooser(room);
   }
 
   /**
-   * The target reaches exactly one socket: the psychic's. It never goes into
-   * `room:state`, so no other client can read it out of memory or devtools.
+   * The target and the pending random card reach exactly one socket: the
+   * chooser's. Neither goes into `room:state`, so no other client can read
+   * them out of memory or devtools.
    */
-  function sendTargetToPsychic(room: Room): void {
+  function sendPrivateToChooser(room: Room): void {
     const game = room.game;
     if (!game?.round) return;
+
+    const chooser = room.players.find((p) => p.id === game.round!.chooserId);
+    if (!chooser?.socketId) return;
+
+    if (game.phase === "topic" && room.randomCard) {
+      io.to(chooser.socketId).emit("round:randomCard", { card: room.randomCard });
+    }
     // From `reveal` onwards the target is public and travels in `room:state`.
     if (game.phase === "reveal" || game.phase === "gameover") return;
-
-    const psychic = room.players.find((p) => p.id === game.round!.psychicId);
-    if (!psychic?.socketId) return;
-    io.to(psychic.socketId).emit("round:target", {
+    io.to(chooser.socketId).emit("round:target", {
       roundNumber: game.round.number,
       target: game.round.target,
     });
@@ -126,16 +120,36 @@ export function createHandlers(io: IO) {
     if (!room.game) return;
     let game = gameReducer(room.game, action);
     if (game.phase === "pass") {
-      game = gameReducer(game, { type: "CONFIRM_PSYCHIC" });
+      game = gameReducer(game, { type: "CONFIRM_CHOOSER" });
     }
     const enteringGuess = room.game.phase !== "guess" && game.phase === "guess";
+    const enteringTopic = room.game.phase !== "topic" && game.phase === "topic";
     room.game = game;
     touch(room);
 
+    if (enteringTopic) room.randomCard = drawCard(game.usedCardIds);
     if (enteringGuess) armGuessDeadline(room);
     if (game.phase !== "guess") disarmGuessDeadline(room);
 
     broadcast(room);
+    if (game.phase === "guess") maybeReveal(room);
+  }
+
+  /** Everyone with a dial who is still connected. */
+  function activeGuessers(room: Room): ServerPlayer[] {
+    const round = room.game?.round;
+    if (!round) return [];
+    return room.players.filter(
+      (p) => p.connected && p.id !== round.chooserId,
+    );
+  }
+
+  /** Move on as soon as every connected guesser has locked. */
+  function maybeReveal(room: Room): void {
+    const round = room.game?.round;
+    if (!round || room.game?.phase !== "guess") return;
+    const waiting = activeGuessers(room).filter((p) => !round.locked[p.id]);
+    if (waiting.length === 0) apply(room, { type: "REVEAL" });
   }
 
   function armGuessDeadline(room: Room): void {
@@ -145,8 +159,8 @@ export function createHandlers(io: IO) {
 
     room.guessDeadlineAt = Date.now() + seconds * 1000;
     timersFor(room.code).guessDeadline = setTimeout(() => {
-      // Whatever the needle is on when the clock runs out is the answer.
-      if (room.game?.phase === "guess") apply(room, { type: "LOCK_GUESS" });
+      // Whatever each dial is on when the clock runs out is that player's answer.
+      if (room.game?.phase === "guess") apply(room, { type: "REVEAL" });
     }, seconds * 1000);
   }
 
@@ -157,26 +171,26 @@ export function createHandlers(io: IO) {
     room.guessDeadlineAt = null;
   }
 
-  /** Give a vanished psychic a moment, then redeal the round to their teammate. */
-  function watchPsychic(room: Room): void {
+  /** Give a vanished chooser a moment, then redeal the round to the next player. */
+  function watchChooser(room: Room): void {
     const game = room.game;
     const t = timersFor(room.code);
     if (t.psychicGrace) clearTimeout(t.psychicGrace);
     t.psychicGrace = undefined;
     if (!game?.round) return;
 
-    const psychic = room.players.find((p) => p.id === game.round!.psychicId);
-    const playing = ["psychic", "guess", "bet"].includes(game.phase);
-    if (!playing || psychic?.connected) return;
+    const chooser = room.players.find((p) => p.id === game.round!.chooserId);
+    const playing = ["topic", "subject", "guess"].includes(game.phase);
+    if (!playing || chooser?.connected) return;
 
     t.psychicGrace = setTimeout(() => {
       const current = room.game;
       if (!current?.round) return;
       const stillGone = !room.players.find(
-        (p) => p.id === current.round!.psychicId,
+        (p) => p.id === current.round!.chooserId,
       )?.connected;
       if (!stillGone) return;
-      apply(room, { type: "ABORT_ROUND", seed: nextSeed(current) });
+      apply(room, { type: "ABORT_ROUND", target: randomTarget() });
     }, PSYCHIC_GRACE_MS);
   }
 
@@ -213,21 +227,6 @@ export function createHandlers(io: IO) {
     return found;
   }
 
-  /**
-   * Team a player counts as for role checks.
-   *
-   * Once a game starts the frozen roster is the authority, not the lobby
-   * record. The two disagree in co-op: `buildRoster` folds everyone onto one
-   * team while their lobby entry keeps whichever side auto-balance gave them.
-   * Reading the lobby value here silently rejected every co-op player but the
-   * first — their dial moved locally and the server threw the update away.
-   */
-  function teamOf(room: Room, playerId: string): string | null {
-    const inGame = room.game?.players.find((p) => p.id === playerId);
-    if (inGame) return inGame.teamId;
-    return room.players.find((p) => p.id === playerId)?.teamId ?? null;
-  }
-
   function requireHost(
     socket: ClientSocket,
   ): { room: Room; player: ServerPlayer } | null {
@@ -252,7 +251,7 @@ export function createHandlers(io: IO) {
       const player = addPlayer(room, data.name);
       bind(socket, room, player);
 
-      ack({ ok: true, playerId: player.id, room: publicRoom(room) });
+      ack({ ok: true, playerId: player.id, room: publicRoom(room, player.id) });
       broadcast(room);
     });
 
@@ -271,8 +270,8 @@ export function createHandlers(io: IO) {
       if (existing) {
         existing.name = data.name;
         bind(socket, room, existing);
-        ack({ ok: true, playerId: existing.id, room: publicRoom(room) });
-        watchPsychic(room);
+        ack({ ok: true, playerId: existing.id, room: publicRoom(room, existing.id) });
+        watchChooser(room);
         broadcast(room);
         return;
       }
@@ -286,28 +285,7 @@ export function createHandlers(io: IO) {
 
       const player = addPlayer(room, data.name);
       bind(socket, room, player);
-      ack({ ok: true, playerId: player.id, room: publicRoom(room) });
-      broadcast(room);
-    });
-
-    socket.on("room:setTeam", (payload) => {
-      const data = parse(socket, setTeamSchema, payload);
-      if (!data) return;
-      const me = whoami(socket);
-      if (!me) return;
-      const { room, player } = me;
-      if (room.game) return fail(socket, "เกมเริ่มแล้ว ย้ายทีมไม่ได้");
-      // Anyone may move themselves; only the host may move someone else.
-      if (data.playerId !== player.id && room.hostId !== player.id) {
-        return fail(socket, "เฉพาะ host เท่านั้น");
-      }
-      if (!TEAM_IDS.includes(data.teamId as (typeof TEAM_IDS)[number])) {
-        return fail(socket, "ทีมไม่ถูกต้อง");
-      }
-      const target = room.players.find((p) => p.id === data.playerId);
-      if (!target) return;
-      target.teamId = data.teamId;
-      touch(room);
+      ack({ ok: true, playerId: player.id, room: publicRoom(room, player.id) });
       broadcast(room);
     });
 
@@ -327,31 +305,51 @@ export function createHandlers(io: IO) {
       if (!me) return;
       const { room } = me;
       if (room.game) return fail(socket, "เกมเริ่มไปแล้ว");
-      if (!rosterIsPlayable(room)) {
-        return fail(socket, "ผู้เล่นยังไม่พอ หรือมีทีมที่ยังไม่มีคน");
-      }
+      if (!rosterIsPlayable(room)) return fail(socket, "ต้องมีอย่างน้อย 2 คน");
 
-      const { players, teams } = buildRoster(room);
-      room.game = createGame(players, teams, room.config, nextSeed(null));
-      // Online has no hand-the-device step.
-      apply(room, { type: "CONFIRM_PSYCHIC" });
+      room.game = createGame(buildPlayers(room), room.config, randomTarget());
+      apply(room, { type: "CONFIRM_CHOOSER" });
     });
 
     socket.on("game:rematch", () => {
       const me = requireHost(socket);
       if (!me?.room.game) return;
-      apply(me.room, { type: "REMATCH", seed: nextSeed(null) });
+      apply(me.room, { type: "REMATCH", target: randomTarget() });
     });
 
-    socket.on("round:clue", (payload) => {
-      const data = parse(socket, clueSchema, payload);
+    socket.on("round:reroll", () => {
+      const me = whoami(socket);
+      const game = me?.room.game;
+      if (!me || !game?.round) return;
+      if (game.phase !== "topic") return;
+      if (game.round.chooserId !== me.player.id) {
+        return fail(socket, "เฉพาะคนเลือกเท่านั้น");
+      }
+      me.room.randomCard = drawCard(game.usedCardIds);
+      touch(me.room);
+      sendPrivateToChooser(me.room);
+    });
+
+    socket.on("round:card", (payload) => {
+      const data = parse(socket, cardSchema, payload);
       if (!data) return;
       const me = whoami(socket);
       if (!me?.room.game?.round) return;
-      if (me.room.game.round.psychicId !== me.player.id) {
-        return fail(socket, "เฉพาะ psychic เท่านั้น");
+      if (me.room.game.round.chooserId !== me.player.id) {
+        return fail(socket, "เฉพาะคนเลือกเท่านั้น");
       }
-      apply(me.room, { type: "SUBMIT_CLUE", clue: data.clue });
+      apply(me.room, { type: "SET_CARD", card: data });
+    });
+
+    socket.on("round:subject", (payload) => {
+      const data = parse(socket, subjectSchema, payload);
+      if (!data) return;
+      const me = whoami(socket);
+      if (!me?.room.game?.round) return;
+      if (me.room.game.round.chooserId !== me.player.id) {
+        return fail(socket, "เฉพาะคนเลือกเท่านั้น");
+      }
+      apply(me.room, { type: "SUBMIT_SUBJECT", subject: data.subject });
     });
 
     socket.on("round:guess", (payload) => {
@@ -359,45 +357,25 @@ export function createHandlers(io: IO) {
       if (!data) return;
       const me = whoami(socket);
       const game = me?.room.game;
-      if (!me || !game?.round) return;
-      if (game.phase !== "guess") return;
-      // The psychic knows the answer, so they never touch the needle.
-      if (
-        teamOf(me.room, me.player.id) !== game.round.guessTeamId ||
-        me.player.id === game.round.psychicId
-      ) {
-        return;
-      }
+      if (!me || !game?.round || game.phase !== "guess") return;
+      // The chooser knows the answer, so they never get a dial.
+      if (me.player.id === game.round.chooserId) return;
 
-      me.room.game = gameReducer(game, { type: "SET_GUESS", value: data.value });
+      me.room.game = gameReducer(game, {
+        type: "SET_GUESS",
+        key: me.player.id,
+        value: data.value,
+      });
       touch(me.room);
-      throttledGuessBroadcast(me.room, socket.id);
+      // No broadcast: dials stay hidden from each other until reveal.
     });
 
     socket.on("round:lockGuess", () => {
       const me = whoami(socket);
       const game = me?.room.game;
-      if (!me || !game?.round) return;
-      if (teamOf(me.room, me.player.id) !== game.round.guessTeamId) return;
-      apply(me.room, { type: "LOCK_GUESS" });
-    });
-
-    socket.on("round:bet", (payload) => {
-      const data = parse(socket, betSchema, payload);
-      if (!data) return;
-      const me = whoami(socket);
-      const game = me?.room.game;
-      if (!me || !game?.round) return;
-      if (teamOf(me.room, me.player.id) !== game.round.betTeamId) return;
-      apply(me.room, { type: "SET_BET", side: data.side });
-    });
-
-    socket.on("round:lockBet", () => {
-      const me = whoami(socket);
-      const game = me?.room.game;
-      if (!me || !game?.round) return;
-      if (teamOf(me.room, me.player.id) !== game.round.betTeamId) return;
-      apply(me.room, { type: "LOCK_BET" });
+      if (!me || !game?.round || game.phase !== "guess") return;
+      if (me.player.id === game.round.chooserId) return;
+      apply(me.room, { type: "LOCK_GUESS", key: me.player.id });
     });
 
     socket.on("round:showScoreboard", () => {
@@ -409,7 +387,7 @@ export function createHandlers(io: IO) {
     socket.on("round:next", () => {
       const me = requireHost(socket);
       if (!me?.room.game) return;
-      apply(me.room, { type: "NEXT_ROUND", seed: nextSeed(me.room.game) });
+      apply(me.room, { type: "NEXT_ROUND", target: randomTarget() });
     });
 
     socket.on("room:leave", () => {
@@ -436,33 +414,12 @@ export function createHandlers(io: IO) {
       if (room.hostId === player.id) promoteHost(room);
       touch(room);
 
-      watchPsychic(room);
+      watchChooser(room);
+      // A player dropping can be the last one we were waiting on.
+      maybeReveal(room);
       broadcast(room);
     });
   };
-
-  /**
-   * Needle updates are the only high-frequency event, so they go out on their
-   * own light-weight channel at most every 50ms instead of a full snapshot.
-   * The dragger is excluded — their own needle is already where they put it,
-   * and echoing it back would fight their finger.
-   */
-  function throttledGuessBroadcast(room: Room, fromSocketId: string): void {
-    const t = timersFor(room.code);
-    t.pendingGuess = room.game?.round?.guess;
-    if (t.guessBroadcast) return;
-
-    const flush = () => {
-      const value = t.pendingGuess;
-      t.guessBroadcast = undefined;
-      t.pendingGuess = undefined;
-      if (value === undefined) return;
-      io.to(room.code).except(fromSocketId).emit("round:guessMoved", { value });
-    };
-
-    flush();
-    t.guessBroadcast = setTimeout(flush, GUESS_BROADCAST_MS);
-  }
 }
 
 /** Periodic cleanup of idle rooms; called once from the server entrypoint. */

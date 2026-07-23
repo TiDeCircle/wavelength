@@ -1,4 +1,4 @@
-import type { GameConfig, GameState, Player, Team } from "@/types/game";
+import type { GameConfig, GameState, Player, TopicCard } from "@/types/game";
 import { DEFAULT_CONFIG } from "@/lib/game/reducer";
 import { generateCode } from "./codes";
 
@@ -10,11 +10,6 @@ import { generateCode } from "./codes";
  * because handlers only ever touch rooms through the functions below.
  */
 
-export const TEAM_IDS = ["team-0", "team-1"] as const;
-export const TEAM_NAMES = ["ทีมชมพู", "ทีมเขียว"] as const;
-
-/** Below this the room plays co-op: one team, no left-right bet. */
-export const MIN_PLAYERS_FOR_TEAMS = 4;
 export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 12;
 
@@ -28,7 +23,6 @@ export const ROOM_TTL_MS = 10 * 60_000;
 export interface ServerPlayer {
   id: string;
   name: string;
-  teamId: string | null;
   connected: boolean;
   socketId: string | null;
   disconnectedAt: number | null;
@@ -42,6 +36,8 @@ export interface Room {
   /** null while the room is in the lobby. */
   game: GameState | null;
   guessDeadlineAt: number | null;
+  /** Card currently offered to the chooser. Not game state — a reroll replaces it. */
+  randomCard: TopicCard | null;
   createdAt: number;
   lastActivityAt: number;
 }
@@ -71,6 +67,7 @@ export function createRoom(config?: Partial<GameConfig>): Room {
     config: { ...DEFAULT_CONFIG, ...config },
     game: null,
     guessDeadlineAt: null,
+    randomCard: null,
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
   };
@@ -82,19 +79,10 @@ export function deleteRoom(code: string): void {
   rooms.delete(code.toUpperCase());
 }
 
-/** Team with the fewest players, so joins stay balanced without any UI. */
-function lightestTeam(room: Room): string {
-  const counts = TEAM_IDS.map(
-    (id) => room.players.filter((p) => p.teamId === id).length,
-  );
-  return TEAM_IDS[counts[0] <= counts[1] ? 0 : 1];
-}
-
 export function addPlayer(room: Room, name: string): ServerPlayer {
   const player: ServerPlayer = {
     id: nextPlayerId(),
     name,
-    teamId: lightestTeam(room),
     connected: true,
     socketId: null,
     disconnectedAt: null,
@@ -129,42 +117,13 @@ export function playerBySocket(socketId: string): {
   return null;
 }
 
-export function coopMode(room: Room): boolean {
-  return room.players.length < MIN_PLAYERS_FOR_TEAMS;
-}
-
-/**
- * Freeze the lobby into the roster the game runs on.
- *
- * Co-op collapses everyone onto one team; otherwise anybody still unassigned
- * is dropped onto the lighter side so no team can start empty.
- */
-export function buildRoster(room: Room): { players: Player[]; teams: Team[] } {
-  const coop = coopMode(room);
-  const teamIds = coop ? [TEAM_IDS[0]] : [...TEAM_IDS];
-
-  const players: Player[] = room.players.map((p, i) => ({
-    id: p.id,
-    name: p.name,
-    teamId: coop
-      ? TEAM_IDS[0]
-      : (p.teamId ?? TEAM_IDS[i % TEAM_IDS.length]),
-  }));
-
-  const teams: Team[] = teamIds.map((id, i) => ({
-    id,
-    name: TEAM_NAMES[i],
-    score: 0,
-    psychicIndex: 0,
-  }));
-
-  return { players, teams };
+/** Freeze the lobby into the roster the game runs on. Join order is turn order. */
+export function buildPlayers(room: Room): Player[] {
+  return room.players.map((p) => ({ id: p.id, name: p.name, score: 0 }));
 }
 
 export function rosterIsPlayable(room: Room): boolean {
-  if (room.players.length < MIN_PLAYERS) return false;
-  const { players, teams } = buildRoster(room);
-  return teams.every((t) => players.some((p) => p.teamId === t.id));
+  return room.players.length >= MIN_PLAYERS;
 }
 
 /** Drop idle rooms and players whose grace period ran out. */
