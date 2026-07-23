@@ -213,6 +213,21 @@ export function createHandlers(io: IO) {
     return found;
   }
 
+  /**
+   * Team a player counts as for role checks.
+   *
+   * Once a game starts the frozen roster is the authority, not the lobby
+   * record. The two disagree in co-op: `buildRoster` folds everyone onto one
+   * team while their lobby entry keeps whichever side auto-balance gave them.
+   * Reading the lobby value here silently rejected every co-op player but the
+   * first — their dial moved locally and the server threw the update away.
+   */
+  function teamOf(room: Room, playerId: string): string | null {
+    const inGame = room.game?.players.find((p) => p.id === playerId);
+    if (inGame) return inGame.teamId;
+    return room.players.find((p) => p.id === playerId)?.teamId ?? null;
+  }
+
   function requireHost(
     socket: ClientSocket,
   ): { room: Room; player: ServerPlayer } | null {
@@ -348,7 +363,7 @@ export function createHandlers(io: IO) {
       if (game.phase !== "guess") return;
       // The psychic knows the answer, so they never touch the needle.
       if (
-        me.player.teamId !== game.round.guessTeamId ||
+        teamOf(me.room, me.player.id) !== game.round.guessTeamId ||
         me.player.id === game.round.psychicId
       ) {
         return;
@@ -363,7 +378,7 @@ export function createHandlers(io: IO) {
       const me = whoami(socket);
       const game = me?.room.game;
       if (!me || !game?.round) return;
-      if (me.player.teamId !== game.round.guessTeamId) return;
+      if (teamOf(me.room, me.player.id) !== game.round.guessTeamId) return;
       apply(me.room, { type: "LOCK_GUESS" });
     });
 
@@ -373,7 +388,7 @@ export function createHandlers(io: IO) {
       const me = whoami(socket);
       const game = me?.room.game;
       if (!me || !game?.round) return;
-      if (me.player.teamId !== game.round.betTeamId) return;
+      if (teamOf(me.room, me.player.id) !== game.round.betTeamId) return;
       apply(me.room, { type: "SET_BET", side: data.side });
     });
 
@@ -381,7 +396,7 @@ export function createHandlers(io: IO) {
       const me = whoami(socket);
       const game = me?.room.game;
       if (!me || !game?.round) return;
-      if (me.player.teamId !== game.round.betTeamId) return;
+      if (teamOf(me.room, me.player.id) !== game.round.betTeamId) return;
       apply(me.room, { type: "LOCK_BET" });
     });
 
