@@ -123,7 +123,7 @@ export function Dial({
     >
       <svg
         ref={svgRef}
-        viewBox={`-12 -14 ${VIEW_W + 24} ${VIEW_H + 14}`}
+        viewBox={`-20 -14 ${VIEW_W + 40} ${VIEW_H + 14}`}
         className={`w-full touch-none ${interactive ? "cursor-grab active:cursor-grabbing" : ""}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -183,7 +183,13 @@ export function Dial({
                 <text
                   x={CX + (R_OUTER + 16) * Math.cos(((180 - needle.value * 1.8) * Math.PI) / 180)}
                   y={CY - (R_OUTER + 16) * Math.sin(((180 - needle.value * 1.8) * Math.PI) / 180)}
-                  textAnchor="middle"
+                  textAnchor={
+                    // Anchor inward at the dial extremes so multi-character labels grow
+                    // towards the center instead of wrapping off the canvas edge.
+                    // Thresholds set at ~1/5 of dial each side (values 0–20 and 80–100)
+                    // where label x-position would otherwise clip against viewBox bounds.
+                    needle.value < 20 ? "start" : needle.value > 80 ? "end" : "middle"
+                  }
                   dominantBaseline="central"
                   className="text-[15px] font-bold"
                   fill={needle.color ?? "var(--needle)"}
