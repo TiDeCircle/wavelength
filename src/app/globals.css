@@ -1,0 +1,66 @@
+@import "tailwindcss";
+
+:root {
+  --surface: #0b1120;
+  --surface-raised: #172033;
+
+  --dial-track: #263248;
+  --dial-tick: #475569;
+  --needle: #f8fafc;
+
+  /* Scoring band, brightest at the bullseye. */
+  --band-4: #fbbf24;
+  --band-3: #60a5fa;
+  --band-2: #3b6ea8;
+
+  --team-a: #f472b6;
+  --team-b: #34d399;
+}
+
+@theme inline {
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-team-a: var(--team-a);
+  --color-team-b: var(--team-b);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+/* Scoring band swinging into view on reveal. */
+@keyframes band-reveal {
+  from {
+    opacity: 0;
+    transform: scale(0.75);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.band-reveal {
+  transform-origin: 200px 210px;
+  animation: band-reveal 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .band-reveal {
+    animation: none;
+  }
+}
+
+body {
+  background:
+    radial-gradient(120% 80% at 50% 0%, #1b2740 0%, transparent 60%),
+    var(--surface);
+  color: #e2e8f0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans Thai",
+    "Sarabun", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Keep the pass-and-play flow from being scrolled around mid-drag. */
+  overscroll-behavior-y: none;
+}
