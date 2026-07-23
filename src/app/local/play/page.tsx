@@ -2,21 +2,20 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getCard } from "@/lib/cards";
 import { useLocalGame } from "@/lib/store/localGame";
-import { teamColor } from "@/components/game/ScoreBoard";
+import { SHARED_DIAL_KEY } from "@/types/game";
 import { PassDeviceScreen } from "@/components/game/PassDeviceScreen";
-import { PsychicView } from "@/components/game/PsychicView";
+import { TopicPickerView } from "@/components/game/TopicPickerView";
+import { SubjectView } from "@/components/game/SubjectView";
 import { GuessView } from "@/components/game/GuessView";
-import { BetView } from "@/components/game/BetView";
 import { RevealView } from "@/components/game/RevealView";
 import { ScoreboardScreen } from "@/components/game/ScoreboardScreen";
 
 /**
  * Phase router for the local game.
  *
- * Each phase mounts exactly one view. That is deliberate: the guess and bet
- * screens simply never render a component that knows the target, rather than
+ * Each phase mounts exactly one view. That is deliberate: the guess screen
+ * simply never renders a component that knows the target, rather than
  * rendering it hidden.
  */
 export default function LocalPlayPage() {
@@ -37,66 +36,57 @@ export default function LocalPlayPage() {
   }
 
   const round = state.round;
-  const card = getCard(round.cardId);
-  const psychic = state.players.find((p) => p.id === round.psychicId);
-  const guessTeam = state.teams.find((t) => t.id === round.guessTeamId);
-  const betTeam = state.teams.find((t) => t.id === round.betTeamId);
+  const chooser = state.players.find((p) => p.id === round.chooserId);
+  const chooserName = chooser?.name ?? "?";
 
   switch (state.phase) {
     case "pass":
       return (
         <PassDeviceScreen
-          psychicName={psychic?.name ?? "?"}
-          teamName={guessTeam?.name ?? ""}
-          teamColor={teamColor(state.teams, round.guessTeamId)}
+          chooserName={chooserName}
           roundNumber={round.number}
-          onConfirm={game.confirmPsychic}
+          onConfirm={game.confirmChooser}
         />
       );
 
-    case "psychic":
+    case "topic":
       return (
-        <PsychicView
-          card={card}
-          target={round.target}
-          psychicName={psychic?.name ?? "?"}
-          onSubmit={game.submitClue}
+        <TopicPickerView
+          card={game.randomCard}
+          chooserName={chooserName}
+          onReroll={game.reroll}
+          onConfirm={game.setCard}
         />
       );
+
+    case "subject":
+      return round.card ? (
+        <SubjectView
+          card={round.card}
+          target={round.target}
+          chooserName={chooserName}
+          onSubmit={game.submitSubject}
+        />
+      ) : null;
 
     case "guess":
-      return (
+      return round.card ? (
         <GuessView
-          card={card}
-          clue={round.clue}
-          guess={round.guess}
-          teamName={guessTeam?.name ?? ""}
-          teamColor={teamColor(state.teams, round.guessTeamId)}
+          card={round.card}
+          subject={round.subject}
+          guess={round.guesses[SHARED_DIAL_KEY] ?? 50}
           discussionSeconds={state.config.discussionSeconds}
           onChange={game.setGuess}
           onLock={game.lockGuess}
         />
-      );
-
-    case "bet":
-      return (
-        <BetView
-          card={card}
-          guess={round.guess}
-          bet={round.bet}
-          teamName={betTeam?.name ?? ""}
-          teamColor={teamColor(state.teams, round.betTeamId)}
-          onSelect={game.setBet}
-          onLock={game.lockBet}
-        />
-      );
+      ) : null;
 
     case "reveal":
       return (
         <RevealView
-          card={card}
           round={round}
-          teams={state.teams}
+          players={state.players}
+          sharedDial={state.config.sharedDial}
           onNext={game.showScoreboard}
         />
       );

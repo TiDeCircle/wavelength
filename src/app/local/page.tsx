@@ -5,16 +5,12 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Screen } from "@/components/ui/Screen";
-import { TEAM_COLORS } from "@/components/game/ScoreBoard";
+import { PLAYER_COLORS } from "@/components/game/ScoreBoard";
 import { DEFAULT_CONFIG } from "@/lib/game/reducer";
-import {
-  buildRoster,
-  MIN_PLAYERS_FOR_TEAMS,
-  rosterIsPlayable,
-} from "@/lib/game/setup";
+import { buildPlayers, MIN_PLAYERS, rotationIsEven } from "@/lib/game/setup";
 import { useLocalGame } from "@/lib/store/localGame";
 
-const TARGET_SCORES = [7, 10, 15];
+const ROUND_COUNTS = [5, 10, 15];
 const TIMERS: { label: string; value: number | null }[] = [
   { label: "ปิด", value: null },
   { label: "60s", value: 60 },
@@ -28,21 +24,14 @@ export default function LocalSetupPage() {
 
   const [names, setNames] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
-  const [teamNames, setTeamNames] = useState<[string, string]>([
-    "ทีมชมพู",
-    "ทีมเขียว",
-  ]);
-  const [targetScore, setTargetScore] = useState(DEFAULT_CONFIG.targetScore);
+  const [rounds, setRounds] = useState(DEFAULT_CONFIG.rounds);
   const [discussionSeconds, setDiscussionSeconds] = useState<number | null>(
     DEFAULT_CONFIG.discussionSeconds,
   );
-  const [leftRightBet, setLeftRightBet] = useState(DEFAULT_CONFIG.leftRightBet);
 
-  const roster = useMemo(
-    () => buildRoster(names, teamNames),
-    [names, teamNames],
-  );
-  const playable = rosterIsPlayable(roster);
+  const players = useMemo(() => buildPlayers(names), [names]);
+  const playable = players.length >= MIN_PLAYERS;
+  const evenRotation = rotationIsEven(players.length, rounds);
 
   const addName = () => {
     const n = draft.trim();
@@ -53,11 +42,11 @@ export default function LocalSetupPage() {
 
   const start = () => {
     if (!playable) return;
-    startGame(roster.players, roster.teams, {
-      targetScore,
+    startGame(players, {
+      rounds,
       discussionSeconds,
-      leftRightBet,
-      coopRounds: DEFAULT_CONFIG.coopRounds,
+      // The device sits on the table: one dial, one score for everyone.
+      sharedDial: true,
     });
     router.push("/local/play");
   };
@@ -117,22 +106,16 @@ export default function LocalSetupPage() {
           </button>
         </div>
 
-        {roster.players.length > 0 && (
+        {players.length > 0 && (
           <ul className="mt-3 flex flex-wrap gap-2">
-            {roster.players.map((p, i) => (
+            {players.map((p, i) => (
               <li key={p.id}>
                 <button
                   onClick={() =>
                     setNames((prev) => prev.filter((_, idx) => idx !== i))
                   }
                   className="rounded-full px-3 py-1.5 text-sm font-semibold text-slate-900"
-                  style={{
-                    background: roster.coop
-                      ? "#94a3b8"
-                      : TEAM_COLORS[
-                          roster.teams.findIndex((t) => t.id === p.teamId)
-                        ],
-                  }}
+                  style={{ background: PLAYER_COLORS[i % PLAYER_COLORS.length] }}
                   title="แตะเพื่อลบ"
                 >
                   {p.name} ✕
@@ -142,58 +125,39 @@ export default function LocalSetupPage() {
           </ul>
         )}
 
-        {names.length > 0 && names.length < MIN_PLAYERS_FOR_TEAMS && (
+        {names.length > 0 && names.length < MIN_PLAYERS && (
           <p className="mt-3 rounded-xl bg-slate-800/60 px-3 py-2 text-xs text-slate-400">
-            น้อยกว่า {MIN_PLAYERS_FOR_TEAMS} คน → เล่นโหมดร่วมมือ ทีมเดียว
-            ไม่มีการเดาซ้าย/ขวา
+            ต้องมีอย่างน้อย {MIN_PLAYERS} คน (คนเลือก 1 + คนเดา 1)
           </p>
         )}
       </section>
 
-      {!roster.coop && (
-        <section>
-          <h2 className="mb-2 text-sm font-semibold text-slate-300">ชื่อทีม</h2>
-          <div className="flex gap-2">
-            {[0, 1].map((i) => (
-              <input
-                key={i}
-                value={teamNames[i]}
-                onChange={(e) =>
-                  setTeamNames((prev) => {
-                    const next = [...prev] as [string, string];
-                    next[i] = e.target.value;
-                    return next;
-                  })
-                }
-                maxLength={16}
-                className="min-w-0 flex-1 rounded-2xl bg-[var(--surface-raised)] px-4 py-3 font-bold outline-none focus:ring-2 focus:ring-amber-400"
-                style={{ color: TEAM_COLORS[i] }}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
       <section className="flex flex-col gap-4">
         <div>
           <h2 className="mb-2 text-sm font-semibold text-slate-300">
-            เล่นถึงกี่คะแนน
+            เล่นกี่รอบ
           </h2>
           <div className="flex gap-2">
-            {TARGET_SCORES.map((s) => (
+            {ROUND_COUNTS.map((r) => (
               <button
-                key={s}
-                onClick={() => setTargetScore(s)}
+                key={r}
+                onClick={() => setRounds(r)}
                 className={`flex-1 rounded-2xl py-3 font-bold ${
-                  targetScore === s
+                  rounds === r
                     ? "bg-amber-400 text-slate-900"
                     : "bg-[var(--surface-raised)] text-slate-300"
                 }`}
               >
-                {s}
+                {r}
               </button>
             ))}
           </div>
+          {playable && !evenRotation && (
+            <p className="mt-2 text-xs text-amber-300/80">
+              {rounds} รอบ หารกับ {players.length} คนไม่ลงตัว
+              บางคนจะได้เลือกมากกว่าคนอื่น
+            </p>
+          )}
         </div>
 
         <div>
@@ -216,20 +180,6 @@ export default function LocalSetupPage() {
             ))}
           </div>
         </div>
-
-        {!roster.coop && (
-          <label className="flex items-center justify-between rounded-2xl bg-[var(--surface-raised)] px-4 py-3">
-            <span className="text-sm font-semibold text-slate-300">
-              ให้อีกทีมเดาซ้าย/ขวา
-            </span>
-            <input
-              type="checkbox"
-              checked={leftRightBet}
-              onChange={(e) => setLeftRightBet(e.target.checked)}
-              className="h-5 w-5 accent-amber-400"
-            />
-          </label>
-        )}
       </section>
 
       {state && (
