@@ -1,6 +1,8 @@
 # Wavelength
 
-เกมทายใจแบบ spectrum guessing — โหมดเล่นเครื่องเดียว (pass-and-play) เล่นได้แล้ว
+## 🔗 เล่นเลย: https://wavelength.madebytide.xyz
+
+เกมทายใจแบบ spectrum guessing — เล่นได้ทั้งเครื่องเดียว (pass-and-play) และออนไลน์หลายเครื่อง
 
 - กติกาเกม: [DESIGN.md](DESIGN.md)
 - โครงสร้าง + แผนเฟสถัดไป: [PROJECT.md](PROJECT.md)
@@ -48,7 +50,7 @@ npm run dev
 |---|---|
 | Local (pass-and-play) | เล่นได้ |
 | Online (room code, หลายเครื่อง) | เล่นได้ |
-| Deploy | ไฟล์พร้อม ยังไม่ได้ขึ้น server — [DEPLOY.md](DEPLOY.md) |
+| Deploy | ขึ้นแล้วที่ [wavelength.madebytide.xyz](https://wavelength.madebytide.xyz) — [DEPLOY.md](DEPLOY.md) |
 
 Online ต้องรันบน platform ที่รัน Node ยาว ๆ (VPS / Railway / Fly.io / Render)
 **Vercel ใช้ไม่ได้** เพราะ serverless ไม่มี process ที่อยู่ยาวให้ Socket.io เกาะ

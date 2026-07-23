@@ -212,12 +212,13 @@ reload กลางรอบ กลับเข้า seat เดิมได้
 
 ---
 
-### Phase 4 — Deploy 🚧 (ไฟล์พร้อม ยังไม่ได้ขึ้น server จริง)
+### Phase 4 — Deploy ✅ ขึ้นจริงแล้ว
 
-**เป้า:** ออนไลน์จริง เพื่อนเข้าเล่นจาก URL ได้
+## 🔗 https://wavelength.madebytide.xyz
 
 **Target: VPS Ubuntu ที่มีอยู่แล้ว** (Node + PM2 + Nginx + Certbot) ไม่ใช่ Railway/Fly
-เพราะเครื่องรัน portfolio อยู่แล้ว ลงเพิ่มได้เลย — portfolio ยึด port 3000, wavelength ใช้ 3001
+เพราะเครื่องรัน site อื่นอยู่แล้ว ลงเพิ่มได้เลย — `newportfolio` ยึด :3000,
+`nptsx-backend` ยึด :3001, wavelength ใช้ **:3002**
 
 - [x] `deploy/nginx/wavelength.conf` — WebSocket upgrade + `proxy_read_timeout 3600s`
 - [x] `ecosystem.config.cjs` — PM2 fork 1 instance, `PORT=3001`, bind `127.0.0.1`
@@ -225,7 +226,8 @@ reload กลางรอบ กลับเข้า seat เดิมได้
 - [x] ย้าย `tsx` จาก devDependencies → dependencies (production รันผ่านมันจริง)
 - [x] `engines.node >= 20.9.0` ให้ npm เตือนตั้งแต่ install
 - [x] [DEPLOY.md](DEPLOY.md) — ขั้นตอน + gotcha + rollback
-- [ ] รัน deploy จริงบน VPS + ตั้ง DNS + certbot
+- [x] Deploy จริง: clone → `npm ci` → build → PM2 → Nginx → certbot (Let's Encrypt ถึง 21 ต.ค. 2026)
+- [x] `pm2 save` + `pm2-tide.service` enabled → reboot ขึ้นเอง
 - [ ] Structured logging (room created/joined/ended, error)
 - [ ] Rate limit ต่อ socket
 - [ ] PWA manifest + icon (เพิ่มลง home screen)
@@ -233,19 +235,28 @@ reload กลางรอบ กลับเข้า seat เดิมได้
 - [ ] Test บนเน็ตจริง: 4G, wifi กระตุก, สลับแอปแล้วกลับมา
 - [ ] Dockerfile (ยังไม่จำเป็น deploy ตรงบน VPS)
 
-**ยืนยันแล้วบนเครื่อง dev:** `NODE_ENV=production tsx server.ts` ตอบ `/healthz` 200,
-`/socket.io/?EIO=4&transport=polling` 200, หน้าแรก 200
+**ยืนยันจากข้างนอกแล้ว:** HTTP 301 → HTTPS, `/healthz` ตอบ ok, WebSocket upgrade
+ได้ `101 Switching Protocols` ผ่าน Nginx จริง, เล่น 2 เครื่องจบรอบได้
+(clue → เข็มขยับ sync ข้ามเครื่อง → lock → reveal เข็ม 40.0 / target 14.2)
 
 **สิ่งที่ต้องรู้ก่อน deploy:**
 
 | เรื่อง | ทำไม |
 |---|---|
 | `npm ci` เต็ม ห้าม `--production` | `next build` ต้องใช้ typescript + tailwind ที่อยู่ใน devDependencies |
+| `NODE_OPTIONS=--dns-result-order=ipv4first` | IPv6 บนเครื่องเสีย ไม่ใส่แล้ว `npm ci` จะ ETIMEDOUT |
+| `. ~/.nvm/nvm.sh` ก่อนทุกคำสั่ง | node มาจาก nvm ไม่อยู่ใน PATH ของ non-interactive shell |
 | PM2 fork 1 instance เท่านั้น | ห้องอยู่ใน memory ของ process — cluster mode ผู้เล่นจะเจอคนละห้อง |
 | `pm2 restart` = ห้องที่เล่นอยู่หายหมด | ไม่มี persistence deploy ตอนไม่มีคนเล่น |
-| `nginx -t` ต้องผ่านก่อน reload | reload ทั้งที config พังจะทำ portfolio ดับไปด้วย |
+| `nginx -t` ต้องผ่านก่อน reload | reload ทั้งที config พังจะทำ site อื่นบนเครื่องดับไปด้วย |
 
-**Done when:** ส่ง URL ให้เพื่อน 6 คน เล่นจบเกมได้ ไม่มีใครหลุด
+**bug ที่เจอตอน play-test บน production** (แก้แล้วทั้งคู่ commit `e98a21b` + `3cf4a3b`):
+โหมด co-op ผู้เล่นที่ไม่ใช่คนแรกลากเข็มไม่ได้ เพราะ role check อ่าน teamId จาก
+lobby record แทนที่จะอ่านจาก roster ที่ freeze ไว้ตอนเริ่มเกม — สองอันตรงกันในโหมด 2 ทีม
+เลยไม่โผล่ตอนเทส 4 คน แต่ co-op server fold ทุกคนไปทีมเดียว ทำให้ไม่ตรง
+พลาดทั้ง client และ server ต้องแก้ทั้ง 2 ที่
+
+**Done when:** ส่ง URL ให้เพื่อน 6 คน เล่นจบเกมได้ ไม่มีใครหลุด — **ยังไม่ได้เทสกับคนจริง 6 คน**
 
 ---
 
