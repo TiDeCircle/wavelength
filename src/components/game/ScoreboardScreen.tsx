@@ -6,12 +6,7 @@ import { ScoreBoard } from "./ScoreBoard";
 import type { GameState } from "@/types/game";
 import type { PublicGameState } from "@/types/online";
 
-/**
- * Between-rounds totals, and the end-of-game screen.
- *
- * Takes the public state shape so online can pass its snapshot straight in —
- * nothing here reads the target.
- */
+/** Between-rounds standings, and the end-of-game screen. */
 export function ScoreboardScreen({
   state,
   onNext,
@@ -25,21 +20,15 @@ export function ScoreboardScreen({
   onNext: () => void;
   onRematch: () => void;
   onExit: () => void;
-  /** Online: only the host starts the next round. */
   canAdvance?: boolean;
   waitingLabel?: string;
   exitLabel?: string;
 }) {
   const over = state.phase === "gameover";
-  const winner = state.teams.find((t) => t.id === state.winningTeamId) ?? null;
-  const delta = state.round?.scores
-    ? {
-        [state.round.scores.guessTeamId]: state.round.scores.guess,
-        ...(state.round.scores.betTeamId
-          ? { [state.round.scores.betTeamId]: state.round.scores.bet }
-          : {}),
-      }
-    : undefined;
+  const sharedDial = state.config.sharedDial;
+  const ranked = [...state.players].sort((a, b) => b.score - a.score);
+  const winner = !sharedDial && ranked.length > 0 ? ranked[0] : null;
+  const delta = state.round?.scores ?? undefined;
 
   return (
     <Screen
@@ -63,17 +52,15 @@ export function ScoreboardScreen({
       <div className="text-center">
         {over ? (
           <>
-            <p className="text-5xl">{winner ? "🏆" : "⌛"}</p>
+            <p className="text-5xl">🏆</p>
             <p className="mt-3 text-2xl font-black">
-              {winner
-                ? `${winner.name} ชนะ`
-                : "หมดรอบแล้ว ยังไม่ถึงเป้า"}
+              {sharedDial ? "จบเกม" : `${winner?.name} ชนะ`}
             </p>
           </>
         ) : (
           <>
             <p className="text-sm font-semibold tracking-widest text-slate-500 uppercase">
-              จบรอบที่ {state.round?.number}
+              จบรอบที่ {state.round?.number} / {state.config.rounds}
             </p>
             <p className="mt-2 text-2xl font-black">คะแนนรวม</p>
           </>
@@ -81,17 +68,12 @@ export function ScoreboardScreen({
       </div>
 
       <ScoreBoard
-        teams={state.teams}
-        targetScore={state.config.targetScore}
+        players={state.players}
+        groupScore={state.groupScore}
+        sharedDial={sharedDial}
+        rounds={state.config.rounds}
         delta={delta}
-        winningTeamId={state.winningTeamId}
       />
-
-      {state.coop && (
-        <p className="text-center text-sm text-slate-500">
-          รอบ {state.round?.number} / {state.config.coopRounds}
-        </p>
-      )}
     </Screen>
   );
 }

@@ -9,17 +9,10 @@ import {
   useReducer,
   useState,
 } from "react";
-import type {
-  BetSide,
-  GameConfig,
-  GameState,
-  Player,
-  RoundSeed,
-  SpectrumCard,
-  Team,
-} from "@/types/game";
+import type { GameConfig, GameState, Player, TopicCard } from "@/types/game";
+import { SHARED_DIAL_KEY } from "@/types/game";
 import { createGame, gameReducer, type GameAction } from "@/lib/game/reducer";
-import { drawCardId, getCard } from "@/lib/cards";
+import { drawCard } from "@/lib/cards";
 import { randomTarget } from "@/lib/game/target";
 
 /**
@@ -35,7 +28,7 @@ import { randomTarget } from "@/lib/game/target";
  * file, so they carry over unchanged.
  */
 
-const STORAGE_KEY = "wavelength:local:v1";
+const STORAGE_KEY = "wavelength:local:v2";
 
 type RootAction = GameAction | { type: "CLEAR" };
 
@@ -49,21 +42,25 @@ function rootReducer(
   return gameReducer(state, action);
 }
 
-function nextSeed(usedCardIds: string[]): RoundSeed {
-  return { cardId: drawCardId(usedCardIds), target: randomTarget() };
+/** The random pick lives outside game state — a reroll must not be a game event. */
+function pickCard(state: GameState | null): TopicCard {
+  return drawCard(state?.usedCardIds ?? []);
 }
 
 interface LocalGameContextValue {
   state: GameState | null;
   /** False until localStorage has been read — render a placeholder till then. */
   ready: boolean;
-  startGame: (players: Player[], teams: Team[], config: GameConfig) => void;
-  confirmPsychic: () => void;
-  submitClue: (clue: string) => void;
+  /** The card currently offered by the random picker. */
+  randomCard: TopicCard;
+  startGame: (players: Player[], config: GameConfig) => void;
+  confirmChooser: () => void;
+  reroll: () => void;
+  setCard: (card: TopicCard) => void;
+  submitSubject: (subject: string) => void;
   setGuess: (value: number) => void;
   lockGuess: () => void;
-  setBet: (side: BetSide) => void;
-  lockBet: () => void;
+  reveal: () => void;
   showScoreboard: () => void;
   nextRound: () => void;
   rematch: () => void;
@@ -79,11 +76,16 @@ export function LocalGameProvider({
 }) {
   const [state, dispatch] = useReducer(rootReducer, null);
   const [ready, setReady] = useState(false);
+  const [randomCard, setRandomCard] = useState<TopicCard>(() => drawCard([]));
 
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) dispatch({ type: "RESTORE", state: JSON.parse(raw) as GameState });
+      if (raw) {
+        const restoredState = JSON.parse(raw) as GameState;
+        dispatch({ type: "RESTORE", state: restoredState });
+        setRandomCard(drawCard(restoredState.usedCardIds));
+      }
     } catch {
       // Corrupt or unavailable storage just means starting fresh.
     }
@@ -101,11 +103,12 @@ export function LocalGameProvider({
   }, [state, ready]);
 
   const startGame = useCallback(
-    (players: Player[], teams: Team[], config: GameConfig) => {
+    (players: Player[], config: GameConfig) => {
       dispatch({
         type: "RESTORE",
-        state: createGame(players, teams, config, nextSeed([])),
+        state: createGame(players, config, randomTarget()),
       });
+      setRandomCard(drawCard([]));
     },
     [],
   );
@@ -114,20 +117,37 @@ export function LocalGameProvider({
     () => ({
       state,
       ready,
+      randomCard,
       startGame,
-      confirmPsychic: () => dispatch({ type: "CONFIRM_PSYCHIC" }),
-      submitClue: (clue) => dispatch({ type: "SUBMIT_CLUE", clue }),
-      setGuess: (value) => dispatch({ type: "SET_GUESS", value }),
-      lockGuess: () => dispatch({ type: "LOCK_GUESS" }),
-      setBet: (side) => dispatch({ type: "SET_BET", side }),
-      lockBet: () => dispatch({ type: "LOCK_BET" }),
+      confirmChooser: () => dispatch({ type: "CONFIRM_CHOOSER" }),
+      reroll: () => {
+        const exclusions: string[] = [...(state?.usedCardIds ?? [])];
+        if (randomCard.id) {
+          exclusions.push(randomCard.id);
+        }
+        setRandomCard(drawCard(exclusions));
+      },
+      setCard: (card) => dispatch({ type: "SET_CARD", card }),
+      submitSubject: (subject) => dispatch({ type: "SUBMIT_SUBJECT", subject }),
+      setGuess: (value) =>
+        dispatch({ type: "SET_GUESS", key: SHARED_DIAL_KEY, value }),
+      lockGuess: () => {
+        dispatch({ type: "LOCK_GUESS", key: SHARED_DIAL_KEY });
+        dispatch({ type: "REVEAL" });
+      },
+      reveal: () => dispatch({ type: "REVEAL" }),
       showScoreboard: () => dispatch({ type: "SHOW_SCOREBOARD" }),
-      nextRound: () =>
-        dispatch({ type: "NEXT_ROUND", seed: nextSeed(state?.usedCardIds ?? []) }),
-      rematch: () => dispatch({ type: "REMATCH", seed: nextSeed([]) }),
+      nextRound: () => {
+        dispatch({ type: "NEXT_ROUND", target: randomTarget() });
+        setRandomCard(pickCard(state));
+      },
+      rematch: () => {
+        dispatch({ type: "REMATCH", target: randomTarget() });
+        setRandomCard(drawCard([]));
+      },
       clear: () => dispatch({ type: "CLEAR" }),
     }),
-    [state, ready, startGame],
+    [state, ready, randomCard, startGame],
   );
 
   return (
@@ -141,23 +161,4 @@ export function useLocalGame(): LocalGameContextValue {
   const ctx = useContext(LocalGameContext);
   if (!ctx) throw new Error("useLocalGame must be used inside <LocalGameProvider>");
   return ctx;
-}
-
-/** Convenience selectors — these read only from state, so they port to online. */
-
-export function useCurrentCard(): SpectrumCard | null {
-  const { state } = useLocalGame();
-  return state?.round ? getCard(state.round.cardId) : null;
-}
-
-export function usePlayer(id: string | undefined): Player | null {
-  const { state } = useLocalGame();
-  if (!id) return null;
-  return state?.players.find((p) => p.id === id) ?? null;
-}
-
-export function useTeam(id: string | null | undefined): Team | null {
-  const { state } = useLocalGame();
-  if (!id) return null;
-  return state?.teams.find((t) => t.id === id) ?? null;
 }

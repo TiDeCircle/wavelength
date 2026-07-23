@@ -1,126 +1,82 @@
 import type {
-  BetSide,
   GameConfig,
   GameState,
   Player,
   Round,
-  RoundSeed,
-  Team,
+  TopicCard,
 } from "@/types/game";
-import { advancePsychic, rolesForRound } from "./rotation";
-import { scoreBet, scoreGuess } from "./scoring";
+import { SHARED_DIAL_KEY } from "@/types/game";
+import { chooserForRound } from "./rotation";
+import { scoreRound } from "./scoring";
 
 /**
  * The whole game as one pure reducer.
  *
- * Local mode drives it from a React context; in the online phase the server
- * runs this exact function and broadcasts the resulting state (minus the
- * target). Keep it free of React, timers, randomness and I/O — anything
- * random arrives through a `RoundSeed` in the action payload.
+ * Local play drives it from a React context; the server runs this exact
+ * function and broadcasts the result minus the target. Keep it free of React,
+ * timers, randomness and I/O — each round's target arrives in the action.
  */
 
 export type GameAction =
-  /** Pass screen: the named psychic has taken the device. */
-  | { type: "CONFIRM_PSYCHIC" }
-  | { type: "SUBMIT_CLUE"; clue: string }
-  | { type: "SET_GUESS"; value: number }
-  | { type: "LOCK_GUESS" }
-  | { type: "SET_BET"; side: BetSide }
-  | { type: "LOCK_BET" }
+  /** Pass screen: the named chooser has the device. Local only. */
+  | { type: "CONFIRM_CHOOSER" }
+  | { type: "SET_CARD"; card: TopicCard }
+  | { type: "SUBMIT_SUBJECT"; subject: string }
+  | { type: "SET_GUESS"; key: string; value: number }
+  | { type: "LOCK_GUESS"; key: string }
+  | { type: "REVEAL" }
   | { type: "SHOW_SCOREBOARD" }
-  | { type: "NEXT_ROUND"; seed: RoundSeed }
-  | { type: "REMATCH"; seed: RoundSeed }
-  /**
-   * Throw the current round away and redeal it to the next psychic on the same
-   * team. Nobody scores. Used online when the psychic drops out mid-round.
-   */
-  | { type: "ABORT_ROUND"; seed: RoundSeed }
+  | { type: "NEXT_ROUND"; target: number }
+  | { type: "REMATCH"; target: number }
+  /** Bin the round and redeal it to the next chooser. Nobody scores. */
+  | { type: "ABORT_ROUND"; target: number }
   | { type: "RESTORE"; state: GameState };
 
 export const DEFAULT_CONFIG: GameConfig = {
-  targetScore: 10,
+  rounds: 10,
   discussionSeconds: 90,
-  leftRightBet: true,
-  coopRounds: 8,
+  sharedDial: false,
 };
 
 function buildRound(
-  state: Pick<GameState, "players" | "teams" | "coop" | "config">,
+  players: Player[],
   roundNumber: number,
-  seed: RoundSeed,
+  target: number,
 ): Round {
-  const roles = rolesForRound(state.players, state.teams, roundNumber);
-  const wantsBet = !state.coop && state.config.leftRightBet;
   return {
     number: roundNumber,
-    cardId: seed.cardId,
-    psychicId: roles.psychicId,
-    guessTeamId: roles.guessTeamId,
-    betTeamId: wantsBet ? roles.betTeamId : null,
-    target: seed.target,
-    clue: "",
-    guess: 50,
-    guessLocked: false,
-    bet: null,
+    chooserId: chooserForRound(players, roundNumber),
+    card: null,
+    target,
+    subject: "",
+    guesses: {},
+    locked: {},
     scores: null,
   };
 }
 
-/** Apply this round's points and move the psychic pointer along. */
-function settle(state: GameState): GameState {
-  const round = state.round;
-  if (!round || round.scores) return state;
-
-  const guessPoints = scoreGuess(round.guess, round.target);
-  const betPoints = round.betTeamId
-    ? scoreBet(round.guess, round.target, round.bet)
-    : 0;
-
-  const teams = advancePsychic(
-    state.teams.map((t) => {
-      if (t.id === round.guessTeamId) return { ...t, score: t.score + guessPoints };
-      if (t.id === round.betTeamId) return { ...t, score: t.score + betPoints };
-      return t;
-    }),
-    round.guessTeamId,
-  );
-
+/** Build a fresh game at round 1. Called by the store and by the server. */
+export function createGame(
+  players: Player[],
+  config: GameConfig,
+  target: number,
+): GameState {
   return {
-    ...state,
-    teams,
-    phase: "reveal",
-    round: {
-      ...round,
-      guessLocked: true,
-      scores: {
-        guess: guessPoints,
-        bet: betPoints,
-        guessTeamId: round.guessTeamId,
-        betTeamId: round.betTeamId,
-      },
-    },
+    config,
+    players: players.map((p) => ({ ...p, score: 0 })),
+    phase: "pass",
+    round: buildRound(players, 1, target),
+    groupScore: 0,
+    usedCardIds: [],
   };
 }
 
-/** Build a fresh game at round 1. Called by the store (and later the server). */
-export function createGame(
-  players: Player[],
-  teams: Team[],
-  config: GameConfig,
-  seed: RoundSeed,
-): GameState {
-  const coop = teams.length < 2;
-  const base = { players, teams, coop, config };
-  return {
-    config,
-    players,
-    teams,
-    coop,
-    phase: "pass",
-    round: buildRound(base, 1, seed),
-    usedCardIds: [seed.cardId],
-    winningTeamId: null,
-  };
+/** Everyone who is allowed a dial this round. */
+function guessKeys(state: GameState): string[] {
+  if (state.config.sharedDial) return [SHARED_DIAL_KEY];
+  return state.players
+    .filter((p) => p.id !== state.round?.chooserId)
+    .map((p) => p.id);
 }
 
 export function gameReducer(state: GameState, action: GameAction): GameState {
@@ -128,52 +84,99 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
     case "RESTORE":
       return action.state;
 
-    case "CONFIRM_PSYCHIC":
+    case "CONFIRM_CHOOSER":
       if (state.phase !== "pass") return state;
-      return { ...state, phase: "psychic" };
+      return { ...state, phase: "topic" };
 
-    case "SUBMIT_CLUE": {
-      if (state.phase !== "psychic" || !state.round) return state;
-      const clue = action.clue.trim();
-      if (!clue) return state;
-      return { ...state, phase: "guess", round: { ...state.round, clue } };
+    case "SET_CARD": {
+      if (state.phase !== "topic" || !state.round) return state;
+      const { card } = action;
+      if (!card.category.trim() || !card.left.trim() || !card.right.trim()) {
+        return state;
+      }
+      return {
+        ...state,
+        phase: "subject",
+        round: { ...state.round, card },
+        usedCardIds:
+          card.id && !state.usedCardIds.includes(card.id)
+            ? [...state.usedCardIds, card.id]
+            : state.usedCardIds,
+      };
+    }
+
+    case "SUBMIT_SUBJECT": {
+      if (state.phase !== "subject" || !state.round) return state;
+      const subject = action.subject.trim();
+      if (!subject) return state;
+      return { ...state, phase: "guess", round: { ...state.round, subject } };
     }
 
     case "SET_GUESS": {
-      if (state.phase !== "guess" || !state.round || state.round.guessLocked) {
-        return state;
-      }
+      if (state.phase !== "guess" || !state.round) return state;
+      if (state.round.locked[action.key]) return state;
       const value = Math.min(100, Math.max(0, action.value));
-      return { ...state, round: { ...state.round, guess: value } };
+      return {
+        ...state,
+        round: {
+          ...state.round,
+          guesses: { ...state.round.guesses, [action.key]: value },
+        },
+      };
     }
 
     case "LOCK_GUESS": {
       if (state.phase !== "guess" || !state.round) return state;
-      const locked = { ...state.round, guessLocked: true };
-      // No opposing team to bet: score straight away.
-      if (!locked.betTeamId) return settle({ ...state, round: locked });
-      return { ...state, phase: "bet", round: locked };
+      return {
+        ...state,
+        round: {
+          ...state.round,
+          locked: { ...state.round.locked, [action.key]: true },
+        },
+      };
     }
 
-    case "SET_BET":
-      if (state.phase !== "bet" || !state.round) return state;
-      return { ...state, round: { ...state.round, bet: action.side } };
+    case "REVEAL": {
+      if (state.phase !== "guess" || !state.round) return state;
+      const round = state.round;
 
-    case "LOCK_BET":
-      if (state.phase !== "bet" || !state.round || !state.round.bet) return state;
-      return settle(state);
+      // A dial nobody touched still counts, from where it started.
+      const guesses: Record<string, number> = {};
+      for (const key of guessKeys(state)) {
+        guesses[key] = round.guesses[key] ?? 50;
+      }
+
+      const scores = scoreRound(
+        guesses,
+        round.target,
+        round.chooserId,
+        state.config.sharedDial,
+      );
+
+      if (state.config.sharedDial) {
+        return {
+          ...state,
+          phase: "reveal",
+          groupScore: state.groupScore + (scores[SHARED_DIAL_KEY] ?? 0),
+          round: { ...round, guesses, scores },
+        };
+      }
+
+      return {
+        ...state,
+        phase: "reveal",
+        players: state.players.map((p) => ({
+          ...p,
+          score: p.score + (scores[p.id] ?? 0),
+        })),
+        round: { ...round, guesses, scores },
+      };
+    }
 
     case "SHOW_SCOREBOARD": {
       if (state.phase !== "reveal" || !state.round) return state;
-      const winner =
-        state.teams.find((t) => t.score >= state.config.targetScore) ?? null;
-      const outOfRounds =
-        state.coop && state.round.number >= state.config.coopRounds;
-
-      if (winner || outOfRounds) {
-        return { ...state, phase: "gameover", winningTeamId: winner?.id ?? null };
-      }
-      return { ...state, phase: "scoreboard" };
+      const over = state.round.number >= state.config.rounds;
+      return { ...state, phase: over ? "gameover" : "scoreboard" };
     }
 
     case "NEXT_ROUND": {
@@ -181,27 +184,24 @@ export function gameReducer(state: GameState, action: GameAction): GameState {
       return {
         ...state,
         phase: "pass",
-        round: buildRound(state, state.round.number + 1, action.seed),
-        usedCardIds: [...state.usedCardIds, action.seed.cardId],
+        round: buildRound(state.players, state.round.number + 1, action.target),
       };
     }
 
     case "ABORT_ROUND": {
       if (!state.round || state.phase === "gameover") return state;
-      const teams = advancePsychic(state.teams, state.round.guessTeamId);
-      const next = { ...state, teams };
+      // Same round number, next person in the roster takes it over.
+      const rotated = [...state.players.slice(1), state.players[0]];
       return {
-        ...next,
+        ...state,
+        players: rotated,
         phase: "pass",
-        round: buildRound(next, state.round.number, action.seed),
-        usedCardIds: [...state.usedCardIds, action.seed.cardId],
+        round: buildRound(rotated, state.round.number, action.target),
       };
     }
 
-    case "REMATCH": {
-      const teams = state.teams.map((t) => ({ ...t, score: 0, psychicIndex: 0 }));
-      return createGame(state.players, teams, state.config, action.seed);
-    }
+    case "REMATCH":
+      return createGame(state.players, state.config, action.target);
 
     default:
       return state;

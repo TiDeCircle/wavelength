@@ -2,14 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { getCard } from "@/lib/cards";
 import { useOnlineGame } from "@/lib/store/onlineGame";
-import { teamColor } from "@/components/game/ScoreBoard";
 import { Lobby } from "@/components/lobby/Lobby";
-import { PsychicView } from "@/components/game/PsychicView";
+import { TopicPickerView } from "@/components/game/TopicPickerView";
+import { SubjectView } from "@/components/game/SubjectView";
 import { WaitingView } from "@/components/game/WaitingView";
 import { GuessView } from "@/components/game/GuessView";
-import { BetView } from "@/components/game/BetView";
 import { RevealView } from "@/components/game/RevealView";
 import { ScoreboardScreen } from "@/components/game/ScoreboardScreen";
 import { Button } from "@/components/ui/Button";
@@ -49,7 +47,6 @@ export default function OnlineRoomPage() {
           room={room}
           me={me}
           isHost={game.isHost}
-          onMove={game.setTeam}
           onConfig={game.setConfig}
           onStart={game.startGame}
           onLeave={() => {
@@ -85,78 +82,78 @@ function RoomGame() {
 
   if (!state || !round) return <Loading />;
 
-  const card = getCard(round.cardId);
-  const psychic = state.players.find((p) => p.id === round.psychicId);
-  const guessTeam = state.teams.find((t) => t.id === round.guessTeamId);
-  const betTeam = state.teams.find((t) => t.id === round.betTeamId);
-  const psychicName = psychic?.name ?? "?";
+  const chooser = state.players.find((p) => p.id === round.chooserId);
+  const chooserName = chooser?.name ?? "?";
 
   switch (state.phase) {
     // `pass` is walked through server-side; it only shows up in a race.
     case "pass":
-    case "psychic":
-      if (game.isPsychic && target !== undefined) {
+    case "topic":
+      if (game.isChooser && game.randomCard) {
         return (
-          <PsychicView
-            card={card}
-            target={target}
-            psychicName={psychicName}
-            onSubmit={game.submitClue}
+          <TopicPickerView
+            card={game.randomCard}
+            chooserName={chooserName}
+            onReroll={game.reroll}
+            onConfirm={game.setCard}
           />
         );
       }
       return (
         <WaitingView
-          card={card}
-          psychicName={psychicName}
-          teamName={guessTeam?.name ?? ""}
-          teamColor={teamColor(state.teams, round.guessTeamId)}
+          card={null}
+          chooserName={chooserName}
           roundNumber={round.number}
+          note="กำลังเลือกหัวข้อ"
+        />
+      );
+
+    case "subject":
+      if (game.isChooser && round.card && target !== undefined) {
+        return (
+          <SubjectView
+            card={round.card}
+            target={target}
+            chooserName={chooserName}
+            onSubmit={game.submitSubject}
+          />
+        );
+      }
+      return (
+        <WaitingView
+          card={round.card}
+          chooserName={chooserName}
+          roundNumber={round.number}
+          note="กำลังคิดคำตอบ"
         />
       );
 
     case "guess":
-      return (
+      return round.card ? (
         <GuessView
-          card={card}
-          clue={round.clue}
+          card={round.card}
+          subject={round.subject}
           guess={needle}
-          teamName={guessTeam?.name ?? ""}
-          teamColor={teamColor(state.teams, round.guessTeamId)}
           discussionSeconds={secondsLeft}
           onChange={game.setGuess}
           onLock={game.lockGuess}
           canGuess={game.canGuess}
           canLock={game.canLock}
+          waitingCount={game.waitingCount}
           watchingLabel={
-            game.isPsychic
-              ? "คุณเป็น psychic — ดูอย่างเดียว รอทีมล็อกคำตอบ"
-              : `รอ${guessTeam?.name ?? "อีกทีม"}ล็อกคำตอบ`
+            game.isChooser
+              ? "คุณเป็นคนเลือก — รอคนอื่นเดา"
+              : "ล็อกแล้ว รอคนอื่น"
           }
         />
-      );
-
-    case "bet":
-      return (
-        <BetView
-          card={card}
-          guess={round.guess}
-          bet={round.bet}
-          teamName={betTeam?.name ?? ""}
-          teamColor={teamColor(state.teams, round.betTeamId)}
-          onSelect={game.setBet}
-          onLock={game.lockBet}
-          canBet={game.canBet}
-        />
-      );
+      ) : null;
 
     case "reveal":
-      // The target is public from this phase on, so the cast is safe here.
       return (
         <RevealView
-          card={card}
-          round={{ ...round, target: target ?? round.guess } as Round}
-          teams={state.teams}
+          round={{ ...round, target: target ?? 50 } as Round}
+          players={state.players}
+          sharedDial={state.config.sharedDial}
           onNext={game.showScoreboard}
           canAdvance={game.isHost}
         />

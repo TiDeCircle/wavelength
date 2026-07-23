@@ -9,7 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { BetSide, GameConfig } from "@/types/game";
+import type { GameConfig, TopicCard } from "@/types/game";
 import type { OnlineIdentity, PublicRoom, RoomPlayer } from "@/types/online";
 import { getSocket } from "@/lib/socket/client";
 import type { JoinResult } from "@/lib/socket/events";
@@ -23,11 +23,11 @@ import type { JoinResult } from "@/lib/socket/events";
  * server, and the state that comes back is the truth.
  *
  * The target is deliberately kept in its own slot (`privateTarget`) rather than
- * merged into room state, because it arrives on a different, psychic-only
+ * merged into room state, because it arrives on a different, chooser-only
  * channel and must be dropped the moment the round changes.
  */
 
-const IDENTITY_KEY = "wavelength:online:v1";
+const IDENTITY_KEY = "wavelength:online:v2";
 
 type Status = "connecting" | "connected" | "disconnected";
 
@@ -44,26 +44,26 @@ interface OnlineGameContextValue {
   target: number | undefined;
 
   isHost: boolean;
-  isPsychic: boolean;
-  isGuessTeam: boolean;
-  isBetTeam: boolean;
+  isChooser: boolean;
   canGuess: boolean;
-  canBet: boolean;
   canLock: boolean;
+  /** Random card offered to the chooser, or null when not the chooser. */
+  randomCard: TopicCard | null;
+  /** Guessers who have not locked yet. */
+  waitingCount: number;
 
   createRoom: (name: string) => Promise<JoinResult>;
   joinRoom: (code: string, name: string) => Promise<JoinResult>;
   rejoin: (code: string) => void;
   leaveRoom: () => void;
 
-  setTeam: (playerId: string, teamId: string) => void;
   setConfig: (config: Partial<GameConfig>) => void;
   startGame: () => void;
-  submitClue: (clue: string) => void;
+  reroll: () => void;
+  setCard: (card: TopicCard) => void;
+  submitSubject: (subject: string) => void;
   setGuess: (value: number) => void;
   lockGuess: () => void;
-  setBet: (side: BetSide) => void;
-  lockBet: () => void;
   showScoreboard: () => void;
   nextRound: () => void;
   rematch: () => void;
@@ -105,6 +105,7 @@ export function OnlineGameProvider({
     roundNumber: number;
     target: number;
   } | null>(null);
+  const [randomCard, setRandomCard] = useState<TopicCard | null>(null);
 
   const identity = useRef<OnlineIdentity | null>(null);
 
@@ -136,19 +137,22 @@ export function OnlineGameProvider({
     const onDisconnect = () => setStatus("disconnected");
     const onState = (next: PublicRoom) => {
       setRoom(next);
-      const guess = next.game?.round?.guess;
-      if (typeof guess === "number") setNeedle(guess);
+      const mine = next.game?.round?.guesses;
+      const id = identity.current?.playerId;
+      if (id && mine && typeof mine[id] === "number") setNeedle(mine[id]);
+      if (next.game?.phase !== "topic") setRandomCard(null);
     };
     const onTarget = (payload: { roundNumber: number; target: number }) =>
       setPrivateTarget(payload);
-    const onMoved = (payload: { value: number }) => setNeedle(payload.value);
+    const onRandomCard = (payload: { card: TopicCard }) =>
+      setRandomCard(payload.card);
     const onError = (payload: { message: string }) => setError(payload.message);
 
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("room:state", onState);
     socket.on("round:target", onTarget);
-    socket.on("round:guessMoved", onMoved);
+    socket.on("round:randomCard", onRandomCard);
     socket.on("room:error", onError);
     if (socket.connected) onConnect();
 
@@ -157,7 +161,7 @@ export function OnlineGameProvider({
       socket.off("disconnect", onDisconnect);
       socket.off("room:state", onState);
       socket.off("round:target", onTarget);
-      socket.off("round:guessMoved", onMoved);
+      socket.off("round:randomCard", onRandomCard);
       socket.off("room:error", onError);
     };
   }, []);
@@ -171,52 +175,26 @@ export function OnlineGameProvider({
   const round = room?.game?.round ?? null;
   const phase = room?.game?.phase;
 
-  /**
-   * Team to judge this player by.
-   *
-   * Once a game starts the roster is frozen, and that roster is the authority
-   * — not the lobby assignment. They differ in co-op, where the server folds
-   * everyone onto one team while their lobby chips keep the side they were
-   * auto-balanced onto. Reading the lobby value here left every co-op player
-   * but the first unable to touch the dial.
-   */
-  const myTeamId =
-    (me && room?.game?.players.find((p) => p.id === me.id)?.teamId) ??
-    me?.teamId ??
-    null;
-
   const isHost = Boolean(me && room && room.hostId === me.id);
-  const isPsychic = Boolean(me && round && round.psychicId === me.id);
-  const isGuessTeam = Boolean(round && myTeamId === round.guessTeamId);
-  const isBetTeam = Boolean(round && myTeamId === round.betTeamId);
-  // The psychic already knows the answer, so they never steer the needle.
-  const canGuess = isGuessTeam && !isPsychic && phase === "guess";
-  const canBet = isBetTeam && phase === "bet";
+  const isChooser = Boolean(me && round && round.chooserId === me.id);
+  // The chooser knows the answer, so they never get a dial.
+  const canGuess = Boolean(me) && !isChooser && phase === "guess";
+  const canLock = canGuess && !round?.locked[me?.id ?? ""];
 
-  /**
-   * Locking the answer is the guessing team's call, not the psychic's — they
-   * know where the target is, so letting them end the round decides it for
-   * everyone. The exception keeps the game from deadlocking: if the psychic is
-   * the only one left on their side, nobody else can lock, so they must.
-   */
-  const teammatesLeft = Boolean(
-    room?.game?.players.some(
-      (p) =>
-        p.teamId === myTeamId &&
-        p.id !== me?.id &&
-        room.players.find((rp) => rp.id === p.id)?.connected,
-    ),
-  );
-  const canLock = isGuessTeam && (!isPsychic || !teammatesLeft);
+  const waitingCount = round
+    ? (room?.players.filter(
+        (p) => p.connected && p.id !== round.chooserId && !round.locked[p.id],
+      ).length ?? 0)
+    : 0;
 
   /**
    * Two ways a target legitimately reaches this client: the public reveal that
-   * everyone gets, or the private emit only the psychic receives. A stale
+   * everyone gets, or the private emit only the chooser receives. A stale
    * private target from an earlier round is ignored.
    */
   const target =
     round?.target ??
-    (isPsychic && privateTarget && privateTarget.roundNumber === round?.number
+    (isChooser && privateTarget && privateTarget.roundNumber === round?.number
       ? privateTarget.target
       : undefined);
 
@@ -303,25 +281,22 @@ export function OnlineGameProvider({
       needle,
       target,
       isHost,
-      isPsychic,
-      isGuessTeam,
-      isBetTeam,
+      isChooser,
       canGuess,
-      canBet,
       canLock,
+      randomCard,
+      waitingCount,
       createRoom,
       joinRoom,
       rejoin,
       leaveRoom,
-      setTeam: (playerId, teamId) =>
-        emit().emit("room:setTeam", { playerId, teamId }),
       setConfig: (config) => emit().emit("room:setConfig", config),
       startGame: () => emit().emit("game:start"),
-      submitClue: (clue) => emit().emit("round:clue", { clue }),
+      reroll: () => emit().emit("round:reroll"),
+      setCard: (card) => emit().emit("round:card", card),
+      submitSubject: (subject) => emit().emit("round:subject", { subject }),
       setGuess,
       lockGuess: () => emit().emit("round:lockGuess"),
-      setBet: (side) => emit().emit("round:bet", { side }),
-      lockBet: () => emit().emit("round:lockBet"),
       showScoreboard: () => emit().emit("round:showScoreboard"),
       nextRound: () => emit().emit("round:next"),
       rematch: () => emit().emit("game:rematch"),
@@ -334,12 +309,11 @@ export function OnlineGameProvider({
       needle,
       target,
       isHost,
-      isPsychic,
-      isGuessTeam,
-      isBetTeam,
+      isChooser,
       canGuess,
-      canBet,
       canLock,
+      randomCard,
+      waitingCount,
       createRoom,
       joinRoom,
       rejoin,

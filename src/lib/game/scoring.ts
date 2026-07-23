@@ -1,4 +1,4 @@
-import type { BetSide } from "@/types/game";
+import { SHARED_DIAL_KEY } from "@/types/game";
 
 /**
  * Scoring band half-widths, from the target outwards.
@@ -10,10 +10,10 @@ import type { BetSide } from "@/types/game";
 export const BAND_EDGES = [2.5, 7.5, 12.5] as const;
 export const BAND_POINTS = [4, 3, 2] as const;
 
-/** Total width of the scoring band, used to keep targets away from the rim. */
+/** Total half-width of the band, used to keep targets away from the rim. */
 export const BAND_HALF_WIDTH = BAND_EDGES[BAND_EDGES.length - 1];
 
-/** Points for the guessing team: 4, 3, 2 or 0. */
+/** Points for one dial: 4, 3, 2 or 0. */
 export function scoreGuess(guess: number, target: number): number {
   const d = Math.abs(guess - target);
   for (let i = 0; i < BAND_EDGES.length; i++) {
@@ -22,44 +22,54 @@ export function scoreGuess(guess: number, target: number): number {
   return 0;
 }
 
-/** Which side of the guess the target actually fell on. `null` on an exact hit. */
-export function actualSide(guess: number, target: number): BetSide | null {
-  if (target < guess) return "left";
-  if (target > guess) return "right";
-  return null;
-}
-
 /**
- * Points for the opposing team's left-right bet.
+ * Points for everyone this round.
  *
- * A bullseye (4 points) leaves no side to bet on, so the bet scores nothing.
+ * Shared dial: one entry, the group's. Individual dials: one entry per
+ * guesser plus the chooser, who earns the rounded average of what their
+ * subject got everyone else — a subject nobody can place scores nothing.
+ * The chooser's own dial, if present, is ignored when computing the average.
  */
-export function scoreBet(
-  guess: number,
+export function scoreRound(
+  guesses: Record<string, number>,
   target: number,
-  bet: BetSide | null,
-): number {
-  if (bet === null) return 0;
-  if (scoreGuess(guess, target) === 4) return 0;
-  return bet === actualSide(guess, target) ? 1 : 0;
+  chooserId: string,
+  sharedDial: boolean,
+): Record<string, number> {
+  const scores: Record<string, number> = {};
+  for (const [key, value] of Object.entries(guesses)) {
+    scores[key] = scoreGuess(value, target);
+  }
+  if (sharedDial) return scores;
+
+  const earned = Object.entries(scores)
+    .filter(([key]) => key !== chooserId)
+    .map(([, score]) => score);
+  const average =
+    earned.length === 0
+      ? 0
+      : Math.round(earned.reduce((sum, n) => sum + n, 0) / earned.length);
+  scores[chooserId] = average;
+  return scores;
 }
 
 /**
- * The five scoring wedges as `[from, to, points]` triples in dial units,
- * clamped to the dial. Used to draw the band and nothing else.
+ * The five scoring wedges as dial ranges, clamped to the dial. Used only for
+ * drawing the band.
  */
 export function bandSegments(
   target: number,
 ): { from: number; to: number; points: number }[] {
-  const segments: { from: number; to: number; points: number }[] = [];
   const edges = [-12.5, -7.5, -2.5, 2.5, 7.5, 12.5];
   const points = [2, 3, 4, 3, 2];
-  for (let i = 0; i < points.length; i++) {
-    segments.push({
+  return points
+    .map((p, i) => ({
       from: Math.max(0, target + edges[i]),
       to: Math.min(100, target + edges[i + 1]),
-      points: points[i],
-    });
-  }
-  return segments.filter((s) => s.to > s.from);
+      points: p,
+    }))
+    .filter((s) => s.to > s.from);
 }
+
+/** Re-exported so callers do not need two imports to key a shared guess. */
+export { SHARED_DIAL_KEY };

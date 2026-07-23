@@ -3,11 +3,12 @@
 import { Button } from "@/components/ui/Button";
 import { Screen } from "@/components/ui/Screen";
 import { RoomCode } from "./RoomCode";
-import { TeamPicker } from "./TeamPicker";
+import { PLAYER_COLORS } from "@/components/game/ScoreBoard";
+import { rotationIsEven } from "@/lib/game/setup";
 import type { GameConfig } from "@/types/game";
 import type { PublicRoom, RoomPlayer } from "@/types/online";
 
-const TARGET_SCORES = [7, 10, 15];
+const ROUND_COUNTS = [5, 10, 15];
 const TIMERS: { label: string; value: number | null }[] = [
   { label: "ปิด", value: null },
   { label: "60s", value: 60 },
@@ -15,15 +16,12 @@ const TIMERS: { label: string; value: number | null }[] = [
   { label: "120s", value: 120 },
 ];
 
-/** Below this the room plays co-op — mirrors `MIN_PLAYERS_FOR_TEAMS` on the server. */
-const MIN_PLAYERS_FOR_TEAMS = 4;
 const MIN_PLAYERS = 2;
 
 export function Lobby({
   room,
   me,
   isHost,
-  onMove,
   onConfig,
   onStart,
   onLeave,
@@ -31,18 +29,11 @@ export function Lobby({
   room: PublicRoom;
   me: RoomPlayer | null;
   isHost: boolean;
-  onMove: (playerId: string, teamId: string) => void;
   onConfig: (config: Partial<GameConfig>) => void;
   onStart: () => void;
   onLeave: () => void;
 }) {
-  const coop = room.players.length < MIN_PLAYERS_FOR_TEAMS;
-  const teamsFilled =
-    coop ||
-    (room.players.some((p) => p.teamId === "team-0") &&
-      room.players.some((p) => p.teamId === "team-1"));
-  const enough = room.players.length >= MIN_PLAYERS;
-  const canStart = isHost && enough && teamsFilled;
+  const canStart = isHost && room.players.length >= MIN_PLAYERS;
 
   const pill = (active: boolean) =>
     `flex-1 rounded-2xl py-3 text-sm font-bold ${
@@ -75,33 +66,33 @@ export function Lobby({
       <section>
         <h2 className="mb-2 text-sm font-semibold text-slate-300">
           ผู้เล่น ({room.players.length})
-          {!coop && (
-            <span className="ml-2 font-normal text-slate-500">
-              แตะชื่อเพื่อย้ายทีม
-            </span>
-          )}
         </h2>
-        <TeamPicker
-          players={room.players}
-          meId={me?.id ?? null}
-          hostId={room.hostId}
-          coop={coop}
-          onMove={onMove}
-        />
-        {!enough && (
+        <ul className="flex flex-wrap gap-2">
+          {room.players.map((p, i) => (
+            <li key={p.id}>
+              <span
+                className={`flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold ${
+                  p.connected
+                    ? "bg-slate-700 text-slate-100"
+                    : "bg-slate-800 text-slate-500 line-through"
+                }`}
+              >
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ background: PLAYER_COLORS[i % PLAYER_COLORS.length] }}
+                />
+                <span className="truncate">{p.name}</span>
+                {p.id === room.hostId && <span title="host">👑</span>}
+                {p.id === me?.id && (
+                  <span className="text-xs text-amber-300">(คุณ)</span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {room.players.length < MIN_PLAYERS && (
           <p className="mt-3 text-center text-xs text-slate-500">
             ต้องมีอย่างน้อย {MIN_PLAYERS} คน
-          </p>
-        )}
-        {enough && coop && (
-          <p className="mt-3 rounded-xl bg-slate-800/60 px-3 py-2 text-xs text-slate-400">
-            น้อยกว่า {MIN_PLAYERS_FOR_TEAMS} คน → โหมดร่วมมือ ทีมเดียว
-            ไม่มีการเดาซ้าย/ขวา
-          </p>
-        )}
-        {enough && !coop && !teamsFilled && (
-          <p className="mt-3 text-center text-xs text-amber-300">
-            ต้องมีคนอยู่ทั้งสองทีม
           </p>
         )}
       </section>
@@ -109,20 +100,26 @@ export function Lobby({
       <section className="flex flex-col gap-4">
         <div>
           <h2 className="mb-2 text-sm font-semibold text-slate-300">
-            เล่นถึงกี่คะแนน
+            เล่นกี่รอบ
           </h2>
           <div className="flex gap-2">
-            {TARGET_SCORES.map((s) => (
+            {ROUND_COUNTS.map((r) => (
               <button
-                key={s}
+                key={r}
                 disabled={!isHost}
-                onClick={() => onConfig({ targetScore: s })}
-                className={pill(room.config.targetScore === s)}
+                onClick={() => onConfig({ rounds: r })}
+                className={pill(room.config.rounds === r)}
               >
-                {s}
+                {r}
               </button>
             ))}
           </div>
+          {!rotationIsEven(room.players.length, room.config.rounds) && (
+            <p className="mt-2 text-xs text-amber-300/80">
+              {room.config.rounds} รอบ หารกับ {room.players.length} คนไม่ลงตัว
+              บางคนจะได้เลือกมากกว่าคนอื่น
+            </p>
+          )}
         </div>
 
         <div>
@@ -142,25 +139,6 @@ export function Lobby({
             ))}
           </div>
         </div>
-
-        {!coop && (
-          <label
-            className={`flex items-center justify-between rounded-2xl bg-[var(--surface-raised)] px-4 py-3 ${
-              isHost ? "" : "opacity-60"
-            }`}
-          >
-            <span className="text-sm font-semibold text-slate-300">
-              ให้อีกทีมเดาซ้าย/ขวา
-            </span>
-            <input
-              type="checkbox"
-              disabled={!isHost}
-              checked={room.config.leftRightBet}
-              onChange={(e) => onConfig({ leftRightBet: e.target.checked })}
-              className="h-5 w-5 accent-amber-400"
-            />
-          </label>
-        )}
 
         {!isHost && (
           <p className="text-center text-xs text-slate-600">

@@ -1,18 +1,18 @@
 import type { GameConfig, GameState, Round } from "./game";
 
-/** A person in a room. `teamId` is null only while the lobby is open. */
+/** A person in a room. */
 export interface RoomPlayer {
   id: string;
   name: string;
-  teamId: string | null;
   connected: boolean;
 }
 
 /**
  * The round as everyone in the room may see it.
  *
- * `target` is absent until the reveal phase. It is stripped in
- * `src/server/redact.ts` — the only place allowed to decide otherwise.
+ * `target` is absent until reveal, and `guesses` holds only the entries this
+ * client is allowed to see. Both are stripped in `src/server/redact.ts` — the
+ * only place allowed to decide otherwise.
  */
 export type PublicRound = Omit<Round, "target"> & { target?: number };
 

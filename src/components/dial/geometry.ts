@@ -13,6 +13,20 @@ export const CY = 210;
 export const R_OUTER = 186;
 export const R_INNER = 96;
 
+/**
+ * The rendered `<svg>` uses a viewBox wider (and slightly taller) than the
+ * arc geometry above so the needle tips, labels and pivot don't clip against
+ * the edge. These are the single source of truth for that viewBox — both
+ * the `viewBox` attribute in Dial.tsx and the pointer-to-value mapping below
+ * must derive from them, or dragging drifts out of sync with what's drawn.
+ */
+export const VIEW_MARGIN_X = 20;
+export const VIEW_MARGIN_TOP = 14;
+export const VIEWBOX_X = -VIEW_MARGIN_X;
+export const VIEWBOX_Y = -VIEW_MARGIN_TOP;
+export const VIEWBOX_W = VIEW_W + VIEW_MARGIN_X * 2;
+export const VIEWBOX_H = VIEW_H + VIEW_MARGIN_TOP;
+
 export function valueToDeg(value: number): number {
   return 180 - value * 1.8;
 }
@@ -46,6 +60,12 @@ export function annularSector(
 /**
  * Turn a pointer position into a dial value.
  *
+ * The rendered svg is width-driven (`w-full`, height auto) with the default
+ * `preserveAspectRatio`, so the client->viewBox scale is uniform and derived
+ * from width alone; the same scale applies to y. Coordinates are then
+ * offset by the viewBox origin (VIEWBOX_X/VIEWBOX_Y) before being measured
+ * against the arc centre (CX, CY).
+ *
  * @param rect Bounding box of the rendered svg, from `getBoundingClientRect()`.
  */
 export function valueFromPointer(
@@ -53,9 +73,9 @@ export function valueFromPointer(
   clientY: number,
   rect: DOMRect,
 ): number {
-  const scale = VIEW_W / rect.width;
-  const vx = (clientX - rect.left) * scale;
-  const vy = (clientY - rect.top) * scale;
+  const scale = VIEWBOX_W / rect.width;
+  const vx = VIEWBOX_X + (clientX - rect.left) * scale;
+  const vy = VIEWBOX_Y + (clientY - rect.top) * scale;
   const deg = (Math.atan2(CY - vy, vx - CX) * 180) / Math.PI;
   const clamped = Math.min(180, Math.max(0, deg));
   return Math.round(((180 - clamped) / 1.8) * 10) / 10;

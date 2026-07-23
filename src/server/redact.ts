@@ -3,34 +3,41 @@ import type { PublicGameState, PublicRoom, RoomPlayer } from "@/types/online";
 import type { Room } from "./rooms";
 
 /**
- * The one place that decides whether the hidden target leaves the server.
+ * The one place that decides what leaves the server.
  *
- * Everything broadcast to a room goes through `publicRoom()`. The target is
- * copied into the payload only once the round has reached `reveal`; before
- * that the field is not present at all, so there is nothing for a client to
- * dig out of a devtools panel. The psychic gets their own copy through a
- * direct `round:target` emit in `handlers.ts`.
+ * Two secrets travel in room state, and both are held back until the reveal:
+ * the target, which is dropped from the payload entirely, and every other
+ * player's dial, which would let a late guesser copy an early one. The chooser
+ * gets their target through a direct `round:target` emit instead.
  *
- * If you add a field to `Round` that could give the target away, strip it here.
+ * If you add a field to `Round` that could give either away, strip it here.
  */
-export function publicGame(game: GameState | null): PublicGameState | null {
+export function publicGame(
+  game: GameState | null,
+  viewerId: string,
+): PublicGameState | null {
   if (!game) return null;
   if (!game.round) return { ...game, round: null };
 
   const { target, ...rest } = game.round;
   const revealed = game.phase === "reveal" || game.phase === "gameover";
 
-  return {
-    ...game,
-    round: revealed ? { ...rest, target } : rest,
-  };
+  if (revealed) {
+    return { ...game, round: { ...rest, target } };
+  }
+
+  // Before reveal a viewer sees their own dial and nobody else's.
+  const own = Object.hasOwn(rest.guesses, viewerId)
+    ? { [viewerId]: rest.guesses[viewerId] }
+    : {};
+
+  return { ...game, round: { ...rest, guesses: own } };
 }
 
-export function publicRoom(room: Room): PublicRoom {
+export function publicRoom(room: Room, viewerId: string): PublicRoom {
   const players: RoomPlayer[] = room.players.map((p) => ({
     id: p.id,
     name: p.name,
-    teamId: p.teamId,
     connected: p.connected,
   }));
 
@@ -39,7 +46,7 @@ export function publicRoom(room: Room): PublicRoom {
     hostId: room.hostId,
     players,
     config: room.config,
-    game: publicGame(room.game),
+    game: publicGame(room.game, viewerId),
     guessDeadlineAt: room.guessDeadlineAt,
   };
 }

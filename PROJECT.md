@@ -55,26 +55,37 @@ Local mode ไม่แตะ socket เลย — รันเป็น static 
 
 | ไฟล์ | หน้าที่ |
 |---|---|
-| `src/types/game.ts` | SpectrumCard, Player, Team, Round, Phase, GameState, GameConfig |
-| `src/lib/game/reducer.ts` | **state machine ทั้งเกม** — local รันบน client, online รันบน server ตัวเดียวกัน. randomness ไม่อยู่ในนี้ ส่งเข้ามาเป็น `RoundSeed` |
-| `src/lib/game/scoring.ts` | `scoreGuess` 4/3/2/0, `scoreBet` 1/0, `bandSegments` สำหรับวาดแถบ |
-| `src/lib/game/rotation.ts` | ใครเป็น psychic รอบไหน + `advancePsychic` |
+| `src/types/game.ts` | TopicCard, Player, Round, Phase, GameState, GameConfig, `SHARED_DIAL_KEY` (ไม่มี Team แล้ว) |
+| `src/lib/game/reducer.ts` | **state machine ทั้งเกม** — local รันบน client, online รันบน server ตัวเดียวกัน. randomness ไม่อยู่ในนี้ ส่ง `target` เข้ามาใน action |
+| `src/lib/game/scoring.ts` | `scoreGuess` 4/3/2/0, `scoreRound` (คนเลือกได้ค่าเฉลี่ยของคนเดา), `bandSegments` |
+| `src/lib/game/rotation.ts` | `chooserForRound` — round-robin ตามลำดับเข้าห้อง |
 | `src/lib/game/target.ts` | สุ่ม target ในช่วง `[12.5, 87.5]` กัน band ล้นขอบ |
-| `src/lib/game/setup.ts` | local เท่านั้น: รายชื่อ → players + teams |
-| `src/lib/cards/th-core.json` | deck 30 ใบ — แก้ไฟล์นี้ไฟล์เดียวถ้าจะเพิ่มการ์ด |
-| `src/lib/cards/index.ts` | loader + `drawCardId` แบบไม่ซ้ำในเกมเดียว |
+| `src/lib/game/setup.ts` | `buildPlayers` (รายชื่อ → players), `rotationIsEven` |
+| `src/lib/cards/topics.json` | deck 32 ใบ (หมวด + สเกล) — แก้ไฟล์นี้ไฟล์เดียวถ้าจะเพิ่มการ์ด |
+| `src/lib/cards/index.ts` | `DECK` + `drawCard(usedCardIds)` แบบไม่ซ้ำในเกมเดียว |
 
 ### Server (online เท่านั้น)
 
 | ไฟล์ | หน้าที่ |
 |---|---|
-| `src/server/redact.ts` | **จุดเดียวที่ตัดสินว่า target ออกจาก server หรือไม่** — เพิ่ม field ที่อาจใบ้ target ต้องมาตัดที่นี่ |
-| `src/server/rooms.ts` | in-memory `Map<code, Room>`, auto-balance ทีม, host transfer, sweeper. เปลี่ยนเป็น Redis = แก้ไฟล์นี้ไฟล์เดียว |
-| `src/server/handlers.ts` | socket handler ทุกตัว + role guard + timer (guess deadline, psychic grace, throttle เข็ม) |
+| `src/server/redact.ts` | **จุดเดียวที่ตัด target + เข็มคนอื่นออกจาก payload** — `publicRoom(room, viewerId)` คืน view เฉพาะของแต่ละคน เพิ่ม field ที่อาจใบ้ต้องมาตัดที่นี่ |
+| `src/server/rooms.ts` | in-memory `Map<code, Room>`, host transfer, sweeper, `randomCard` ที่ยื่นให้คนเลือก. เปลี่ยนเป็น Redis = แก้ไฟล์นี้ไฟล์เดียว |
+| `src/server/handlers.ts` | socket handler ทุกตัว + role guard + timer (guess deadline, chooser grace). ไม่ broadcast เข็มระหว่างเดา |
 | `src/server/codes.ts` | สุ่ม room code |
 | `src/types/online.ts` | RoomPlayer, PublicRound, PublicGameState, PublicRoom |
 | `src/lib/socket/events.ts` | ชื่อ event + Zod schema + typed event map — **ใช้ร่วมทั้ง client และ server** |
-| `scripts/check-redaction.ts` | `npm run check:redaction` — fail ถ้า target โผล่ใน payload ก่อน reveal |
+| `scripts/check-redaction.ts` | `npm run check:redaction` — fail ถ้า target หรือเข็มคนอื่นโผล่ใน payload ก่อน reveal |
+
+### Tests
+
+| ไฟล์ | คลุมอะไร |
+|---|---|
+| `vitest.config.ts` | test runner config (`@/` alias) |
+| `tests/unit/scoring.test.ts` | band + `scoreRound` (คนเลือกได้ค่าเฉลี่ย, ตัดเข็มตัวเองออก) |
+| `tests/unit/reducer.test.ts` | phase machine ทุก transition + guard |
+| `tests/unit/rotation.test.ts` | `chooserForRound` round-robin + empty guard |
+| `tests/unit/cards.test.ts` | draw ไม่ซ้ำ + deck shape |
+| `tests/unit/redact.test.ts` | target + เข็มคนอื่นไม่หลุดก่อน reveal |
 
 ### Client state
 
@@ -91,42 +102,43 @@ Local mode ไม่แตะ socket เลย — รันเป็น static 
 
 | ไฟล์ | ใช้ที่ไหน | prop ที่คุมสิทธิ์ |
 |---|---|---|
-| `components/dial/Dial.tsx` | ทุกที่ | `onChange` (ไม่ส่ง = read-only), `target` (ไม่ส่ง = **ไม่ mount band เลย**) |
+| `components/dial/Dial.tsx` | ทุกที่ | `onChange` (ไม่ส่ง = read-only), `target` (ไม่ส่ง = **ไม่ mount band เลย**), `needles[]` (หลายเข็มตอน reveal) |
 | `components/dial/TargetBand.tsx` | Dial | — |
-| `components/dial/geometry.ts` | Dial | value ↔ angle, arc path, pointer → value |
-| `components/game/PsychicView.tsx` | ทั้ง 2 โหมด | — |
-| `components/game/GuessView.tsx` | ทั้ง 2 โหมด | `canGuess`, `canLock`, `watchingLabel` |
-| `components/game/BetView.tsx` | ทั้ง 2 โหมด | `canBet` |
-| `components/game/RevealView.tsx` | ทั้ง 2 โหมด | `canAdvance` |
+| `components/dial/geometry.ts` | Dial | value ↔ angle, arc path, pointer → value, viewBox constants |
+| `components/game/TopicPickerView.tsx` | คนเลือก | Random/Custom tabs |
+| `components/game/SubjectView.tsx` | คนเลือก | เห็น target + พิมพ์ชื่อของ (แทน PsychicView) |
+| `components/game/GuessView.tsx` | ทั้ง 2 โหมด | `canGuess`, `canLock`, `watchingLabel`, `waitingCount` |
+| `components/game/RevealView.tsx` | ทั้ง 2 โหมด | `canAdvance`, `sharedDial` |
 | `components/game/ScoreboardScreen.tsx` | ทั้ง 2 โหมด | `canAdvance`, `exitLabel` |
-| `components/game/ScoreBoard.tsx` | ทั้ง 2 โหมด | — |
+| `components/game/ScoreBoard.tsx` | ทั้ง 2 โหมด | `PLAYER_COLORS`, `playerColor` |
 | `components/game/PassDeviceScreen.tsx` | local เท่านั้น | — |
 | `components/game/WaitingView.tsx` | online เท่านั้น | — |
-| `components/lobby/*` | online เท่านั้น | Lobby, TeamPicker, RoomCode |
-| `components/ui/*` | ทุกที่ | Button, Screen, SpectrumHeading |
+| `components/lobby/*` | online เท่านั้น | Lobby, RoomCode (ตัด TeamPicker แล้ว) |
+| `components/ui/*` | ทุกที่ | Button, Screen |
 
 prop `can*` ทุกตัว default เป็น `true` เพื่อให้ local mode ใช้ได้โดยไม่ต้องส่งอะไรเพิ่ม
 
 ### หลักการแบ่ง
 
 - `lib/game/*` = **pure functions ล้วน** ไม่มี React ไม่มี socket → local กับ online ใช้ร่วมกัน ทดสอบง่าย
-  randomness ไม่อยู่ในนี้ — การ์ดกับ target ส่งเข้ามาเป็น `RoundSeed` ใน action payload
+  randomness ไม่อยู่ในนี้ — `target` ส่งเข้ามาใน action, การ์ดที่ยืนยันส่งผ่าน `SET_CARD`
   (local: store สุ่ม / online: server สุ่ม)
 - `server/*` = แตะได้แค่ฝั่ง server ห้าม import จาก client
 - `redact.ts` แยกไฟล์ตั้งใจ — จุดเดียวที่ตัดสินว่า target หลุดหรือไม่ ทำให้ audit ง่ายและเขียน test คลุมได้ครบ
 - Local mode คือ state machine ตัวเดียวกับ online แค่รันบน client แทน server
 
-### การซ่อน target — 3 ชั้น
+### การซ่อนข้อมูล — 3 ชั้น
 
-1. **Server ไม่ส่งออกไป** — `redact.ts` ตัด field `target` ออกจากทุก payload ที่
-   broadcast จนกว่าจะถึง phase `reveal` psychic รับ target ผ่าน event
-   `round:target` ที่ยิงไปที่ socket ตัวเดียว ไม่ใช่ broadcast
+1. **Server ไม่ส่งออกไป** — `redact.ts` `publicRoom(room, viewerId)` ตัด `target`
+   + เข็มคนอื่นออกจาก payload ของแต่ละคน จนกว่าจะถึง phase `reveal`.
+   คนเลือกรับ target ผ่าน event `round:target` ยิงไป socket ตัวเดียว. server
+   ส่ง `room:state` แยก payload ต่อคน ไม่ใช่ broadcast ก้อนเดียว
 2. **Client ไม่ mount** — `<Dial>` ที่ไม่ได้รับ prop `target` จะไม่ render
    `<TargetBand>` เลย ไม่ใช่ซ่อนด้วย CSS
-3. **Psychic ห้ามลากเข็ม** — `canGuess = isGuessTeam && !isPsychic` เพราะ psychic
-   รู้คำตอบอยู่แล้ว
+3. **คนเลือกไม่มีเข็ม** — `canGuess = !isChooser` เพราะรู้คำตอบอยู่แล้ว
 
-ชั้น 1 คือชั้นที่สำคัญที่สุด ชั้น 2 อย่างเดียวไม่พอเมื่อ state วิ่งผ่าน network
+ชั้น 1 สำคัญสุด ชั้น 2 อย่างเดียวไม่พอเมื่อ state วิ่งผ่าน network.
+เข็มคนอื่นก็ต้องซ่อนด้วย ไม่งั้นคนล็อกทีหลังลอกคนล็อกก่อนได้
 `npm run check:redaction` เฝ้าชั้น 1 ไว้
 
 ### การ validate action ฝั่ง server
@@ -134,10 +146,22 @@ prop `can*` ทุกตัว default เป็น `true` เพื่อให
 ทุก action จาก client ผ่าน 3 ด่าน:
 
 1. Zod schema ใน `lib/socket/events.ts` — payload หน้าตาถูกไหม
-2. role guard ใน `handlers.ts` — คนนี้เป็น psychic / อยู่ทีมที่เดา / เป็น host ไหม
+2. role guard ใน `handlers.ts` — คนนี้เป็นคนเลือก / คนเดา / host ไหม
 3. phase guard ใน `reducer.ts` — action นี้ทำได้ใน phase นี้ไหม
 
 client ไม่ถูกเชื่ออะไรเลยนอกจาก "socket นี้คือ player คนไหน"
+
+### Socket events (topic mode)
+
+**client → server:** `room:create`, `room:join`, `room:setConfig`, `room:leave`,
+`game:start`, `game:rematch`, `round:reroll`, `round:card`, `round:subject`,
+`round:guess`, `round:lockGuess`, `round:showScoreboard`, `round:next`
+
+**server → client:** `room:state` (แยก payload ต่อคน), `round:target` (คนเลือกคนเดียว),
+`round:randomCard` (คนเลือกคนเดียว, phase topic), `room:error`
+
+**ไม่มี event broadcast เข็มระหว่างเดา** — เข็มซ่อนกันจนถึง reveal `round:guess`
+อัปเดต state ฝั่ง server เฉย ๆ ไม่ส่งต่อ
 
 ---
 
@@ -265,7 +289,33 @@ reload กลางรอบ กลับเข้า seat เดิมได้
 
 ---
 
-## 4. Backlog (หลัง Phase 4)
+### Phase 5 — Topic Mode redesign 🚧
+
+**เปลี่ยนรูปแบบเกม:** ตัดระบบทีม/psychic/เดาซ้าย-ขวา ออกทั้งหมด → ผลัดกันเป็น **คนเลือก**
+ตั้งหัวข้อ (Random/Custom) + ชื่อของบนสเกล คนอื่นเดาว่ามันอยู่ตรงไหน
+
+- spec: [docs/superpowers/specs/2026-07-23-topic-mode-redesign-design.md](docs/superpowers/specs/2026-07-23-topic-mode-redesign-design.md)
+- plan: [docs/superpowers/plans/2026-07-23-topic-mode.md](docs/superpowers/plans/2026-07-23-topic-mode.md)
+
+- [x] ติด Vitest (โปรเจกต์ไม่เคยมี test runner) — 35 tests คลุม scoring/reducer/rotation/cards/redact
+- [x] เขียน game layer ใหม่: types, reducer, scoring (`scoreRound`), rotation, setup, deck 32 ใบ
+- [x] Dial รองรับหลายเข็มพร้อม label (`needles[]`)
+- [x] หน้าจอใหม่: TopicPickerView, SubjectView / ลบ PsychicView, BetView, TeamPicker
+- [x] Local mode: เข็มเดียว คะแนนกลุ่ม — เล่นจบได้ (verify ด้วย browser จริง)
+- [x] Online mode: เข็มคนละอันซ่อนกัน, leaderboard รายคน, คนเลือกได้ค่าเฉลี่ย
+- [x] Redaction กว้างขึ้น: `publicRoom(room, viewerId)` ซ่อนเข็มคนอื่นด้วย ไม่ใช่แค่ target
+- [ ] Deploy topic mode ขึ้น production (Task 13)
+- [ ] เทสกับคนจริงหลายเครื่อง
+
+**ทำด้วย subagent-driven-development** — implementer + reviewer แยก subagent ต่อ task
+bug ที่ review จับได้ก่อนถึง production: `scoreRound` นับเข็มตัวเอง, dial pointer เพี้ยน
+20 หน่วยที่ขอบ (จาก viewBox ที่ขยาย), refresh แล้วได้การ์ดซ้ำ, ห้องค้างเมื่อคนสุดท้ายออก
+
+**build แดงตั้งแต่ Task 2–11** ตั้งใจ — แก้ shared types พร้อมกันทั้งแอป Task 11 กู้กลับเขียว
+
+---
+
+## 4. Backlog (หลัง Phase 5)
 
 - Custom deck — ผู้เล่นสร้าง spectrum เอง
 - Deck ภาษาอังกฤษ + toggle ภาษา

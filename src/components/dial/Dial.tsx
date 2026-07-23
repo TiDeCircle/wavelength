@@ -8,10 +8,40 @@ import {
   CY,
   R_INNER,
   R_OUTER,
-  VIEW_H,
-  VIEW_W,
+  VIEWBOX_H,
+  VIEWBOX_W,
+  VIEWBOX_X,
+  VIEWBOX_Y,
   valueFromPointer,
 } from "./geometry";
+
+/** SVG units per character in the 15px bold needle-label font (approximate). */
+const LABEL_CHAR_WIDTH = 8;
+/** Distance from the rim to the label anchor point, matching the `x`/`y` below. */
+const LABEL_TIP_OFFSET = 16;
+/**
+ * Worst case for a middle-anchored label (20 <= value <= 80): at value 20 or
+ * 80 — the edges of the middle band, just inside the start/end thresholds —
+ * the anchor point sits closest to a viewBox edge while the text still grows
+ * in both directions from it. That distance to the nearer edge bounds half
+ * the label's width; double it for the full budget the label must fit in.
+ */
+const WORST_LABEL_X = CX + (R_OUTER + LABEL_TIP_OFFSET) * Math.cos((144 * Math.PI) / 180);
+const WORST_LABEL_HALF_WIDTH = WORST_LABEL_X - VIEWBOX_X;
+const MAX_LABEL_CHARS = Math.floor((WORST_LABEL_HALF_WIDTH * 2) / LABEL_CHAR_WIDTH);
+
+function truncateLabel(label: string): string {
+  if (label.length <= MAX_LABEL_CHARS) return label;
+  return `${label.slice(0, Math.max(0, MAX_LABEL_CHARS - 1))}…`;
+}
+
+export interface DialNeedle {
+  value: number;
+  /** Short caption drawn at the needle tip. Omit for an unlabelled needle. */
+  label?: string;
+  /** CSS colour. Defaults to the standard needle colour. */
+  color?: string;
+}
 
 export interface DialProps {
   /** Needle position, 0-100. */
@@ -30,6 +60,11 @@ export interface DialProps {
   animateNeedle?: boolean;
   /** Hide the needle entirely — the psychic has no guess to show yet. */
   showNeedle?: boolean;
+  /**
+   * Draw several needles at once instead of the single `value` one. Used on
+   * reveal, where every player's dial appears together.
+   */
+  needles?: DialNeedle[];
   /** Extra class for the scoring band, used for the reveal animation. */
   bandClassName?: string;
 }
@@ -43,6 +78,7 @@ export function Dial({
   disabled = false,
   animateNeedle = false,
   showNeedle = true,
+  needles,
   bandClassName,
 }: DialProps) {
   const svgRef = useRef<SVGSVGElement>(null);
@@ -109,7 +145,7 @@ export function Dial({
     >
       <svg
         ref={svgRef}
-        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+        viewBox={`${VIEWBOX_X} ${VIEWBOX_Y} ${VIEWBOX_W} ${VIEWBOX_H}`}
         className={`w-full touch-none ${interactive ? "cursor-grab active:cursor-grabbing" : ""}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -142,22 +178,51 @@ export function Dial({
         })}
 
         {/* Needle */}
+        {showNeedle &&
+          (needles ?? [{ value }]).map((needle, i) => (
+            <g key={needle.label ? `needle-${needle.label}` : `needle-idx-${i}`}>
+              <g
+                transform={`rotate(${(needle.value - 50) * 1.8} ${CX} ${CY})`}
+                style={{
+                  transition: animateNeedle
+                    ? "transform 700ms cubic-bezier(0.22, 1, 0.36, 1)"
+                    : undefined,
+                }}
+              >
+                <polygon
+                  points={`${CX - 7},${CY} ${CX + 7},${CY} ${CX + 2},${CY - R_OUTER - 4} ${CX - 2},${CY - R_OUTER - 4}`}
+                  fill={needle.color ?? "var(--needle)"}
+                  opacity={needles ? 0.85 : 1}
+                />
+                <circle
+                  cx={CX}
+                  cy={CY - R_OUTER - 4}
+                  r={7}
+                  fill={needle.color ?? "var(--needle)"}
+                />
+              </g>
+              {needle.label && (
+                <text
+                  x={CX + (R_OUTER + 16) * Math.cos(((180 - needle.value * 1.8) * Math.PI) / 180)}
+                  y={CY - (R_OUTER + 16) * Math.sin(((180 - needle.value * 1.8) * Math.PI) / 180)}
+                  textAnchor={
+                    // Anchor inward at the dial extremes so multi-character labels grow
+                    // towards the center instead of wrapping off the canvas edge.
+                    // Thresholds set at ~1/5 of dial each side (values 0–20 and 80–100)
+                    // where label x-position would otherwise clip against viewBox bounds.
+                    needle.value < 20 ? "start" : needle.value > 80 ? "end" : "middle"
+                  }
+                  dominantBaseline="central"
+                  className="text-[15px] font-bold"
+                  fill={needle.color ?? "var(--needle)"}
+                >
+                  {truncateLabel(needle.label)}
+                </text>
+              )}
+            </g>
+          ))}
         {showNeedle && (
           <>
-            <g
-              transform={`rotate(${(value - 50) * 1.8} ${CX} ${CY})`}
-              style={{
-                transition: animateNeedle
-                  ? "transform 700ms cubic-bezier(0.22, 1, 0.36, 1)"
-                  : undefined,
-              }}
-            >
-              <polygon
-                points={`${CX - 7},${CY} ${CX + 7},${CY} ${CX + 2},${CY - R_OUTER - 4} ${CX - 2},${CY - R_OUTER - 4}`}
-                fill="var(--needle)"
-              />
-              <circle cx={CX} cy={CY - R_OUTER - 4} r={7} fill="var(--needle)" />
-            </g>
             <circle cx={CX} cy={CY} r={16} fill="var(--needle)" />
             <circle cx={CX} cy={CY} r={7} fill="var(--surface)" />
           </>
