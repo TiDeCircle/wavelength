@@ -1,46 +1,72 @@
-import type { Team } from "@/types/game";
+import type { Player } from "@/types/game";
 
-export const TEAM_COLORS = ["var(--team-a)", "var(--team-b)"] as const;
+export const PLAYER_COLORS = [
+  "#f472b6",
+  "#34d399",
+  "#60a5fa",
+  "#fbbf24",
+  "#c084fc",
+  "#fb923c",
+  "#22d3ee",
+  "#a3e635",
+] as const;
 
-export function teamColor(teams: Team[], teamId: string | null): string {
-  const i = teams.findIndex((t) => t.id === teamId);
-  return TEAM_COLORS[i === -1 ? 0 : i % TEAM_COLORS.length];
+export function playerColor(players: Player[], playerId: string | null): string {
+  const i = players.findIndex((p) => p.id === playerId);
+  return PLAYER_COLORS[(i === -1 ? 0 : i) % PLAYER_COLORS.length];
 }
 
 /**
- * Running totals. Mode-agnostic: it takes plain team data, so the online mode
- * renders the same component from server state.
+ * Standings. Individual play ranks players; shared-dial play has one number
+ * for the table, so it shows that instead.
  */
 export function ScoreBoard({
-  teams,
-  targetScore,
-  /** Points added this round, keyed by team id — shown as a `+n` badge. */
+  players,
+  groupScore,
+  sharedDial,
+  rounds,
   delta,
-  winningTeamId,
 }: {
-  teams: Team[];
-  targetScore: number;
+  players: Player[];
+  groupScore: number;
+  sharedDial: boolean;
+  /** Total rounds in the game, shown as the ceiling. */
+  rounds: number;
+  /** Points added this round, keyed by player id. */
   delta?: Record<string, number>;
-  winningTeamId?: string | null;
 }) {
+  if (sharedDial) {
+    const max = rounds * 4;
+    return (
+      <div className="rounded-2xl bg-[var(--surface-raised)] p-5 text-center">
+        <p className="text-xs font-semibold tracking-widest text-slate-500 uppercase">
+          คะแนนกลุ่ม
+        </p>
+        <p className="mt-2 text-5xl font-black text-amber-300">{groupScore}</p>
+        <p className="mt-1 text-sm text-slate-500">เต็ม {max}</p>
+      </div>
+    );
+  }
+
+  const ranked = [...players].sort((a, b) => b.score - a.score);
+  const top = ranked[0]?.score ?? 0;
+
   return (
-    <div className="flex flex-col gap-3">
-      {teams.map((team, i) => {
-        const gained = delta?.[team.id] ?? 0;
-        const pct = Math.min(100, (team.score / targetScore) * 100);
+    <div className="flex flex-col gap-2">
+      {ranked.map((player) => {
+        const gained = delta?.[player.id] ?? 0;
+        const pct = top > 0 ? (player.score / top) * 100 : 0;
         return (
           <div
-            key={team.id}
-            className={`rounded-2xl bg-[var(--surface-raised)] p-4 ${
-              winningTeamId === team.id ? "ring-2 ring-amber-400" : ""
-            }`}
+            key={player.id}
+            className="rounded-2xl bg-[var(--surface-raised)] p-3"
           >
             <div className="flex items-baseline justify-between gap-3">
               <span
                 className="truncate text-base font-bold"
-                style={{ color: TEAM_COLORS[i % TEAM_COLORS.length] }}
+                style={{ color: playerColor(players, player.id) }}
               >
-                {team.name}
+                {player.name}
               </span>
               <span className="shrink-0 text-sm text-slate-400">
                 {gained > 0 && (
@@ -49,17 +75,16 @@ export function ScoreBoard({
                   </span>
                 )}
                 <span className="text-2xl font-black text-slate-100">
-                  {team.score}
+                  {player.score}
                 </span>
-                <span className="ml-1">/ {targetScore}</span>
               </span>
             </div>
-            <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-700">
+            <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-700">
               <div
                 className="h-full rounded-full transition-[width] duration-500"
                 style={{
                   width: `${pct}%`,
-                  background: TEAM_COLORS[i % TEAM_COLORS.length],
+                  background: playerColor(players, player.id),
                 }}
               />
             </div>
