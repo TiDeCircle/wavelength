@@ -8,10 +8,32 @@ import {
   CY,
   R_INNER,
   R_OUTER,
-  VIEW_H,
-  VIEW_W,
+  VIEWBOX_H,
+  VIEWBOX_W,
+  VIEWBOX_X,
+  VIEWBOX_Y,
   valueFromPointer,
 } from "./geometry";
+
+/** SVG units per character in the 15px bold needle-label font (approximate). */
+const LABEL_CHAR_WIDTH = 8;
+/** Distance from the rim to the label anchor point, matching the `x`/`y` below. */
+const LABEL_TIP_OFFSET = 16;
+/**
+ * Worst case for a middle-anchored label (20 <= value <= 80): at value 20 or
+ * 80 — the edges of the middle band, just inside the start/end thresholds —
+ * the anchor point sits closest to a viewBox edge while the text still grows
+ * in both directions from it. That distance to the nearer edge bounds half
+ * the label's width; double it for the full budget the label must fit in.
+ */
+const WORST_LABEL_X = CX + (R_OUTER + LABEL_TIP_OFFSET) * Math.cos((144 * Math.PI) / 180);
+const WORST_LABEL_HALF_WIDTH = WORST_LABEL_X - VIEWBOX_X;
+const MAX_LABEL_CHARS = Math.floor((WORST_LABEL_HALF_WIDTH * 2) / LABEL_CHAR_WIDTH);
+
+function truncateLabel(label: string): string {
+  if (label.length <= MAX_LABEL_CHARS) return label;
+  return `${label.slice(0, Math.max(0, MAX_LABEL_CHARS - 1))}…`;
+}
 
 export interface DialNeedle {
   value: number;
@@ -123,7 +145,7 @@ export function Dial({
     >
       <svg
         ref={svgRef}
-        viewBox={`-20 -14 ${VIEW_W + 40} ${VIEW_H + 14}`}
+        viewBox={`${VIEWBOX_X} ${VIEWBOX_Y} ${VIEWBOX_W} ${VIEWBOX_H}`}
         className={`w-full touch-none ${interactive ? "cursor-grab active:cursor-grabbing" : ""}`}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
@@ -158,7 +180,7 @@ export function Dial({
         {/* Needle */}
         {showNeedle &&
           (needles ?? [{ value }]).map((needle, i) => (
-            <g key={i}>
+            <g key={needle.label ? `needle-${needle.label}` : `needle-idx-${i}`}>
               <g
                 transform={`rotate(${(needle.value - 50) * 1.8} ${CX} ${CY})`}
                 style={{
@@ -194,7 +216,7 @@ export function Dial({
                   className="text-[15px] font-bold"
                   fill={needle.color ?? "var(--needle)"}
                 >
-                  {needle.label}
+                  {truncateLabel(needle.label)}
                 </text>
               )}
             </g>
