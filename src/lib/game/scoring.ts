@@ -28,6 +28,7 @@ export function scoreGuess(guess: number, target: number): number {
  * Shared dial: one entry, the group's. Individual dials: one entry per
  * guesser plus the chooser, who earns the rounded average of what their
  * subject got everyone else — a subject nobody can place scores nothing.
+ * The chooser's own dial, if present, is ignored when computing the average.
  */
 export function scoreRound(
   guesses: Record<string, number>,
@@ -41,7 +42,9 @@ export function scoreRound(
   }
   if (sharedDial) return scores;
 
-  const earned = Object.values(scores);
+  const earned = Object.entries(scores)
+    .filter(([key]) => key !== chooserId)
+    .map(([, score]) => score);
   const average =
     earned.length === 0
       ? 0

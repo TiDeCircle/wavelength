@@ -19,9 +19,16 @@ describe("scoreGuess", () => {
 });
 
 describe("bandSegments", () => {
-  it("clamps to the dial at the edges", () => {
-    const segments = bandSegments(13);
-    expect(segments[0].from).toBe(0.5);
+  // These targets deliberately sit outside [12.5, 87.5] to exercise clamping.
+  it("clamps the low edge to 0 when target is near the bottom", () => {
+    const segments = bandSegments(0);
+    expect(segments[0].from).toBe(0);
+    expect(segments.every((s) => s.to > s.from)).toBe(true);
+  });
+
+  it("clamps the high edge to 100 when target is near the top", () => {
+    const segments = bandSegments(100);
+    expect(segments[segments.length - 1].to).toBe(100);
     expect(segments.every((s) => s.to > s.from)).toBe(true);
   });
 });
