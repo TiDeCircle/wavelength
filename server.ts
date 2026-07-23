@@ -25,6 +25,14 @@ async function main() {
   await app.prepare();
 
   const httpServer = createServer((req, res) => {
+    // Answered by this process rather than by Next, so a green health check
+    // means the socket server itself is alive — that is what PM2 is watching.
+    if (req.url === "/healthz") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true, uptime: Math.round(process.uptime()) }));
+      return;
+    }
+
     handle(req, res).catch((err) => {
       console.error("[next] request failed", err);
       res.statusCode = 500;

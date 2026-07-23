@@ -48,7 +48,7 @@ npm run dev
 |---|---|
 | Local (pass-and-play) | เล่นได้ |
 | Online (room code, หลายเครื่อง) | เล่นได้ |
-| Deploy | ยังไม่ทำ — Phase 4 ใน PROJECT.md |
+| Deploy | ไฟล์พร้อม ยังไม่ได้ขึ้น server — [DEPLOY.md](DEPLOY.md) |
 
-Online ต้องรันบน platform ที่รัน Node ยาว ๆ (Railway / Fly.io / Render)
+Online ต้องรันบน platform ที่รัน Node ยาว ๆ (VPS / Railway / Fly.io / Render)
 **Vercel ใช้ไม่ได้** เพราะ serverless ไม่มี process ที่อยู่ยาวให้ Socket.io เกาะ

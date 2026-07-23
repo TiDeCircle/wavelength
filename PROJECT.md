@@ -212,20 +212,38 @@ reload กลางรอบ กลับเข้า seat เดิมได้
 
 ---
 
-### Phase 4 — Deploy
+### Phase 4 — Deploy 🚧 (ไฟล์พร้อม ยังไม่ได้ขึ้น server จริง)
 
 **เป้า:** ออนไลน์จริง เพื่อนเข้าเล่นจาก URL ได้
 
-- [ ] Dockerfile (Node 24 alpine, multi-stage)
-- [ ] Deploy Railway หรือ Fly.io (ต้องรองรับ WebSocket + sticky session)
-- [ ] Env config: `PORT`, `HOST`, `NODE_ENV` (socket ต่อ same-origin อยู่แล้ว ไม่ต้องมี URL แยก)
-- [ ] Health check endpoint
+**Target: VPS Ubuntu ที่มีอยู่แล้ว** (Node + PM2 + Nginx + Certbot) ไม่ใช่ Railway/Fly
+เพราะเครื่องรัน portfolio อยู่แล้ว ลงเพิ่มได้เลย — portfolio ยึด port 3000, wavelength ใช้ 3001
+
+- [x] `deploy/nginx/wavelength.conf` — WebSocket upgrade + `proxy_read_timeout 3600s`
+- [x] `ecosystem.config.cjs` — PM2 fork 1 instance, `PORT=3001`, bind `127.0.0.1`
+- [x] `/healthz` ตอบจาก `server.ts` ตรง ๆ (ไม่ผ่าน Next) → เขียวแปลว่า socket server ยังอยู่จริง
+- [x] ย้าย `tsx` จาก devDependencies → dependencies (production รันผ่านมันจริง)
+- [x] `engines.node >= 20.9.0` ให้ npm เตือนตั้งแต่ install
+- [x] [DEPLOY.md](DEPLOY.md) — ขั้นตอน + gotcha + rollback
+- [ ] รัน deploy จริงบน VPS + ตั้ง DNS + certbot
 - [ ] Structured logging (room created/joined/ended, error)
 - [ ] Rate limit ต่อ socket
 - [ ] PWA manifest + icon (เพิ่มลง home screen)
 - [ ] Lighthouse mobile ≥ 90
 - [ ] Test บนเน็ตจริง: 4G, wifi กระตุก, สลับแอปแล้วกลับมา
-- [ ] README: วิธีรัน + วิธี deploy
+- [ ] Dockerfile (ยังไม่จำเป็น deploy ตรงบน VPS)
+
+**ยืนยันแล้วบนเครื่อง dev:** `NODE_ENV=production tsx server.ts` ตอบ `/healthz` 200,
+`/socket.io/?EIO=4&transport=polling` 200, หน้าแรก 200
+
+**สิ่งที่ต้องรู้ก่อน deploy:**
+
+| เรื่อง | ทำไม |
+|---|---|
+| `npm ci` เต็ม ห้าม `--production` | `next build` ต้องใช้ typescript + tailwind ที่อยู่ใน devDependencies |
+| PM2 fork 1 instance เท่านั้น | ห้องอยู่ใน memory ของ process — cluster mode ผู้เล่นจะเจอคนละห้อง |
+| `pm2 restart` = ห้องที่เล่นอยู่หายหมด | ไม่มี persistence deploy ตอนไม่มีคนเล่น |
+| `nginx -t` ต้องผ่านก่อน reload | reload ทั้งที config พังจะทำ portfolio ดับไปด้วย |
 
 **Done when:** ส่ง URL ให้เพื่อน 6 คน เล่นจบเกมได้ ไม่มีใครหลุด
 
