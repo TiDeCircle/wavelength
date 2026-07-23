@@ -81,7 +81,11 @@ export function LocalGameProvider({
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) dispatch({ type: "RESTORE", state: JSON.parse(raw) as GameState });
+      if (raw) {
+        const restoredState = JSON.parse(raw) as GameState;
+        dispatch({ type: "RESTORE", state: restoredState });
+        setRandomCard(drawCard(restoredState.usedCardIds));
+      }
     } catch {
       // Corrupt or unavailable storage just means starting fresh.
     }
@@ -116,7 +120,13 @@ export function LocalGameProvider({
       randomCard,
       startGame,
       confirmChooser: () => dispatch({ type: "CONFIRM_CHOOSER" }),
-      reroll: () => setRandomCard(pickCard(state)),
+      reroll: () => {
+        const exclusions: string[] = [...(state?.usedCardIds ?? [])];
+        if (randomCard.id) {
+          exclusions.push(randomCard.id);
+        }
+        setRandomCard(drawCard(exclusions));
+      },
       setCard: (card) => dispatch({ type: "SET_CARD", card }),
       submitSubject: (subject) => dispatch({ type: "SUBMIT_SUBJECT", subject }),
       setGuess: (value) =>
