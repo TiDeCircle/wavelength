@@ -99,8 +99,9 @@ export function createHandlers(io: IO) {
     if (game.phase === "topic" && room.randomCard) {
       io.to(chooser.socketId).emit("round:randomCard", { card: room.randomCard });
     }
-    // From `reveal` onwards the target is public and travels in `room:state`.
-    if (game.phase === "reveal" || game.phase === "gameover") return;
+    // Withheld until `subject`: the chooser must commit to a topic card before
+    // seeing the target, or in custom mode they could tailor the spectrum to it.
+    if (game.phase !== "subject" && game.phase !== "guess") return;
     io.to(chooser.socketId).emit("round:target", {
       roundNumber: game.round.number,
       target: game.round.target,
@@ -133,6 +134,10 @@ export function createHandlers(io: IO) {
 
     broadcast(room);
     if (game.phase === "guess") maybeReveal(room); // already broadcasts if it fires
+    // Re-evaluate the chooser watchdog on every transition: ABORT_ROUND can
+    // redeal to a chooser who is themselves disconnected, and only a fresh
+    // watchChooser() call arms a deadline for that case.
+    watchChooser(room);
   }
 
   /** Everyone with a dial who is still connected. */
