@@ -22,7 +22,7 @@ module.exports = {
 
       env: {
         NODE_ENV: "production",
-        PORT: 3001,
+        PORT: 3002,
         // Nginx is the only thing that should reach this port.
         HOST: "127.0.0.1",
       },
