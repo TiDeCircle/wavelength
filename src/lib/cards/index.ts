@@ -1,24 +1,23 @@
-import type { SpectrumCard } from "@/types/game";
-import thCore from "./th-core.json";
+import type { TopicCard } from "@/types/game";
+import topics from "./topics.json";
+
+type DeckEntry = Omit<TopicCard, "custom">;
 
 /**
- * The active deck. Add a JSON file next to this one and merge it here to
- * extend the deck — nothing else in the app hard-codes card data.
+ * The random deck. Add a JSON file beside this one and merge it here to
+ * extend it — nothing else in the app hard-codes card data.
  */
-export const DECK: SpectrumCard[] = thCore as SpectrumCard[];
-
-export function getCard(id: string): SpectrumCard {
-  const card = DECK.find((c) => c.id === id);
-  if (!card) throw new Error(`Unknown card id: ${id}`);
-  return card;
-}
+export const DECK: TopicCard[] = (topics as DeckEntry[]).map((c) => ({
+  ...c,
+  custom: false,
+}));
 
 /**
- * Draw a card that has not been played yet this game. Once the deck runs out
- * the used list is ignored and cards start repeating.
+ * Draw a card the game has not confirmed yet. Once the deck runs dry the used
+ * list is ignored and cards start repeating.
  */
-export function drawCardId(usedCardIds: string[]): string {
-  const pool = DECK.filter((c) => !usedCardIds.includes(c.id));
+export function drawCard(usedCardIds: string[]): TopicCard {
+  const pool = DECK.filter((c) => c.id && !usedCardIds.includes(c.id));
   const from = pool.length > 0 ? pool : DECK;
-  return from[Math.floor(Math.random() * from.length)].id;
+  return from[Math.floor(Math.random() * from.length)];
 }

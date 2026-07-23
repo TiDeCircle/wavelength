@@ -1,113 +1,88 @@
 /**
  * Shared game types.
  *
- * These describe the game only — nothing here is specific to local (hotseat)
- * or online play. The online mode in the next phase reuses this file as-is,
- * with the server owning `GameState` instead of a React context.
+ * Nothing here is specific to local or online play — the server runs the same
+ * reducer over the same state that a React context does locally.
  */
 
-/** A pair of opposing concepts. `left` sits at dial 0, `right` at dial 100. */
-export interface SpectrumCard {
-  id: string;
+/** Key that shared-dial (local) play stores its single guess under. */
+export const SHARED_DIAL_KEY = "__shared__";
+
+/** A category plus the spectrum its subjects are placed on. */
+export interface TopicCard {
+  /** Deck id, used to avoid repeats. `null` when the chooser wrote it. */
+  id: string | null;
+  /** The bucket subjects must come from, e.g. "Movie". */
+  category: string;
+  /** Sits at dial 0. */
   left: string;
+  /** Sits at dial 100. */
   right: string;
+  custom: boolean;
 }
 
 export interface Player {
   id: string;
   name: string;
-  teamId: string;
-}
-
-export interface Team {
-  id: string;
-  name: string;
+  /** Individual score. Unused while `config.sharedDial` is on. */
   score: number;
-  /** Index into this team's players — drives psychic round-robin. */
-  psychicIndex: number;
-}
-
-/** Which side of the guess the opposing team bets the target is on. */
-export type BetSide = "left" | "right";
-
-export interface RoundScores {
-  /** Points for the guessing team (4 / 3 / 2 / 0). */
-  guess: number;
-  /** Points for the opposing team's left-right bet (1 / 0). */
-  bet: number;
-  /** Team that earned `guess` points. */
-  guessTeamId: string;
-  /** Team that earned `bet` points. `null` in co-op mode. */
-  betTeamId: string | null;
 }
 
 export interface Round {
   number: number;
-  cardId: string;
-  psychicId: string;
-  /** Team the psychic belongs to — the team that gets to guess. */
-  guessTeamId: string;
-  /** Team making the left-right bet. `null` in co-op mode. */
-  betTeamId: string | null;
+  /** Player who picks the card and names the subject this round. */
+  chooserId: string;
+  /** null until the chooser confirms a card. */
+  card: TopicCard | null;
   /**
    * Hidden dial position, 0-100.
    *
-   * SECURITY (online phase): this field must never be serialized into a
-   * payload broadcast to the whole room before the `reveal` phase. See
-   * `src/lib/game/redact.ts` when that phase lands.
+   * SECURITY: never serialize this into a payload broadcast to a whole room
+   * before the reveal phase. See `src/server/redact.ts`.
    */
   target: number;
-  clue: string;
-  /** Current needle position of the guessing team, 0-100. */
-  guess: number;
-  guessLocked: boolean;
-  bet: BetSide | null;
-  scores: RoundScores | null;
+  /** What the chooser named. "" until submitted. */
+  subject: string;
+  /** Keyed by player id online, by `SHARED_DIAL_KEY` locally. */
+  guesses: Record<string, number>;
+  /** Same keys as `guesses`. */
+  locked: Record<string, boolean>;
+  /** Points earned this round, same keys plus the chooser. null until reveal. */
+  scores: Record<string, number> | null;
 }
 
 export type Phase =
-  /** "Hand the device to <psychic>" gate. Nothing secret is on screen. */
+  /** Local only: "hand the device to <chooser>". */
   | "pass"
-  /** Psychic sees the target and writes a clue. */
-  | "psychic"
-  /** Team drags the dial. Target is not rendered. */
+  /** Chooser picks random or custom card. */
+  | "topic"
+  /** Chooser sees the target and names a subject. */
+  | "subject"
+  /** Everyone else places the dial. */
   | "guess"
-  /** Opposing team bets left or right. Target is not rendered. */
-  | "bet"
-  /** Target revealed, points shown. */
+  /** Target and every dial revealed together. */
   | "reveal"
   /** Running totals between rounds. */
   | "scoreboard"
-  /** A team hit the target score. */
+  /** All configured rounds played. */
   | "gameover";
 
 export interface GameConfig {
-  /** Points needed to win. */
-  targetScore: number;
-  /** Seconds the team gets to discuss, or `null` for no timer. */
+  /** Total rounds in the game. */
+  rounds: number;
+  /** Seconds to guess, or null for no clock. */
   discussionSeconds: number | null;
-  /** Left-right bet enabled. Always off in co-op mode. */
-  leftRightBet: boolean;
-  /** Co-op only: rounds available to reach `targetScore`. */
-  coopRounds: number;
+  /** One dial and one group score, for a device passed around a table. */
+  sharedDial: boolean;
 }
 
 export interface GameState {
   config: GameConfig;
   players: Player[];
-  teams: Team[];
-  /** True when there is only one team (2-3 players). No bet phase. */
-  coop: boolean;
   phase: Phase;
   round: Round | null;
-  /** Cards already played this game, so the deck does not repeat. */
+  /** Cumulative score when `config.sharedDial` is on. */
+  groupScore: number;
+  /** Deck ids already confirmed this game. Rerolls do not count. */
   usedCardIds: string[];
-  winningTeamId: string | null;
-}
-
-/** Card id + target for an upcoming round. Supplied by the caller so the
- *  reducer stays pure — in online mode the server generates this instead. */
-export interface RoundSeed {
-  cardId: string;
-  target: number;
 }
